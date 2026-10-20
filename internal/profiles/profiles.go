@@ -55,6 +55,49 @@ func List(userData string) ([]Profile, error) {
 	return out, nil
 }
 
+// Rename changes a profile's display name in Local State and in the
+// profile's own Preferences. Helium must not be running.
+func Rename(userData, dir, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("profiles: empty name")
+	}
+	doc, err := loadLocalState(userData)
+	if err != nil {
+		return err
+	}
+	entry, _ := chromejson.Lookup(doc, "profile.info_cache."+dir).(map[string]any)
+	if entry == nil {
+		return fmt.Errorf("profiles: no profile %q", dir)
+	}
+	entry["name"] = name
+	entry["is_using_default_name"] = false
+	prefsPath := filepath.Join(userData, dir, "Preferences")
+	if data, err := os.ReadFile(prefsPath); err == nil {
+		if v, err := chromejson.Decode(data); err == nil {
+			if p, ok := v.(map[string]any); ok {
+				chromejson.Set(p, "profile.name", name)
+				chromejson.Set(p, "profile.using_default_name", false)
+				if err := writeAtomic(prefsPath, []byte(chromejson.Compact(p))); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return writeAtomic(filepath.Join(userData, "Local State"), []byte(chromejson.Compact(doc)))
+}
+
+func writeAtomic(path string, data []byte) error {
+	tmp := path + ".hs-tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
 // Add creates a new profile called name and returns its folder name. Helium
 // must not be running. avatarIndex picks one of Chromium's built-in avatars.
 func Add(userData, name string, avatarIndex int) (string, error) {
