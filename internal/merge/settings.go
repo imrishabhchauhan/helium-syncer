@@ -178,3 +178,13 @@ func removePath(doc map[string]any, path string) {
 	}
 	delete(cur, parts[len(parts)-1])
 }
+
+// ProtectedSettings lists the synced settings kept in Secure Preferences.
+func ProtectedSettings() []string {
+	var out []string
+	for p := range protectedSettings {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}

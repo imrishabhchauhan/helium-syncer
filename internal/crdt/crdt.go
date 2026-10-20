@@ -56,6 +56,22 @@ func NewClock(device string, now func() int64) *Clock {
 	return &Clock{device: device, now: now}
 }
 
+// Last returns the latest stamp issued or observed (to persist the clock).
+func (c *Clock) Last() Stamp {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last
+}
+
+// Restore continues a persisted clock.
+func (c *Clock) Restore(last Stamp) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.last.Less(last) {
+		c.last = Stamp{Wall: last.Wall, Counter: last.Counter, Device: c.device}
+	}
+}
+
 // Next returns a stamp later than every stamp issued or observed so far.
 func (c *Clock) Next() Stamp {
 	c.mu.Lock()
