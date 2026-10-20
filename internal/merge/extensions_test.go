@@ -9,7 +9,12 @@ import (
 )
 
 func ext(name, version string, enabled bool) json.RawMessage {
-	b, _ := json.Marshal(ExtItem{Name: name, Version: version, Enabled: enabled})
+	b, _ := json.Marshal(ExtItem{Name: name, Version: version, Enabled: enabled, Package: "pkg-" + version})
+	return b
+}
+
+func extData(hash, blob string) json.RawMessage {
+	b, _ := json.Marshal(ExtData{Hash: hash, Blob: blob})
 	return b
 }
 
@@ -22,7 +27,9 @@ func TestPlanExtensions(t *testing.T) {
 		{Type: TypeExtension, Key: "ublock", Value: ext("uBO Lite", "2.0", true), Stamp: st(2)},
 		{Type: TypeExtension, Key: "old", Deleted: true, Stamp: st(3)},
 		{Type: TypeExtension, Key: "off", Value: ext("Off", "1.0", false), Stamp: st(4)},
-		{Type: TypeExtData, Key: "dark", Value: json.RawMessage(`"hash-from-mac"`), Stamp: st(5)},
+		{Type: TypeExtData, Key: "dark", Value: extData("hash-from-mac", "blob-a"), Stamp: st(5)},
+		// Same data content uploaded separately: different blob, same hash.
+		{Type: TypeExtData, Key: "off", Value: extData("same", "blob-mac"), Stamp: st(6)},
 	}
 	cur := map[string]json.RawMessage{
 		"ublock": ext("uBO Lite", "1.9", true), // older here
@@ -30,7 +37,8 @@ func TestPlanExtensions(t *testing.T) {
 		"off":    ext("Off", "1.0", true),      // disabled on the Mac
 		"mine":   ext("Only here", "1.0", true),
 	}
-	p := PlanExtensions(cur, map[string]json.RawMessage{}, exts, data, clock, incoming, nil)
+	curData := map[string]json.RawMessage{"off": extData("same", "blob-win")}
+	p := PlanExtensions(cur, curData, exts, data, clock, incoming, nil)
 	want := ExtPlan{Install: []string{"dark", "ublock"}, Remove: []string{"old"}, Disable: []string{"off"}, LoadData: []string{"dark"}}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("plan %+v\nwant %+v", p, want)

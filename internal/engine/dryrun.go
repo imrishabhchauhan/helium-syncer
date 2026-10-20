@@ -3,6 +3,8 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -26,6 +28,20 @@ type noSend struct{ Transport }
 
 func (noSend) Push(context.Context, []crdt.Op) error                  { return nil }
 func (noSend) Announce(context.Context, string, string, string) error { return nil }
+
+// PutBlob pretends to upload (a dry run sends nothing).
+func (noSend) PutBlob(_ context.Context, data []byte) (string, error) {
+	sum := sha256.Sum256(data)
+	return "dry-run-" + hex.EncodeToString(sum[:8]), nil
+}
+
+// GetBlob downloads for real: reading is allowed in a dry run.
+func (n noSend) GetBlob(ctx context.Context, id string) ([]byte, error) {
+	if b, ok := n.Transport.(BlobStore); ok {
+		return b.GetBlob(ctx, id)
+	}
+	return nil, errors.New("this server does not store files")
+}
 
 // DryRun runs a complete sync on a temporary copy of the user data and
 // state, with sending switched off, and reports exactly which of Helium's

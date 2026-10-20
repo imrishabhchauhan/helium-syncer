@@ -57,7 +57,8 @@ func List(profile string) ([]Extension, error) {
 		e := Extension{ID: id, settingsRaw: m}
 		e.Location = intOf(m["location"])
 		e.FromStore, _ = m["from_webstore"].(bool)
-		e.Path = filepath.ToSlash(str(m["path"]))
+		// The path uses the separator of the OS that registered it.
+		e.Path = strings.ReplaceAll(str(m["path"]), `\`, "/")
 		if man, ok := m["manifest"].(map[string]any); ok {
 			e.Name, e.Version = str(man["name"]), str(man["version"])
 		}

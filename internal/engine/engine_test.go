@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/bookmarks"
+	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
+	"github.com/imrishabhchauhan/helium-syncer/internal/extensions"
 )
 
 // fakeUserData builds a minimal closed Helium folder with one profile.
@@ -219,6 +221,94 @@ func TestFirstSyncOfSetUpDeviceWritesNothing(t *testing.T) {
 	if len(rep.Written) != 0 {
 		t.Fatalf("first sync of the Mac must not write any Helium file, wrote %v", rep.Written)
 	}
+}
+
+const darkReader = "eimadpbcbfnmbkopoojfekhnkhdbieeh"
+
+// installFakeExtension registers a Web Store extension with some data.
+func installFakeExtension(t *testing.T, profile, version, data string) {
+	ver := filepath.Join(profile, "Extensions", darkReader, version+"_0")
+	os.MkdirAll(ver, 0o700)
+	os.WriteFile(filepath.Join(ver, "manifest.json"), []byte(`{"name":"Dark Reader","version":"`+version+`"}`), 0o600)
+	d := filepath.Join(profile, "Local Extension Settings", darkReader)
+	os.MkdirAll(d, 0o700)
+	os.WriteFile(filepath.Join(d, "000003.log"), []byte(data), 0o600)
+	path := filepath.Join(profile, "Secure Preferences")
+	doc, _ := readDoc(path, `{"protection":{"macs":{}}}`)
+	m, _ := chromejson.Decode([]byte(`{"location":1,"from_webstore":true,"path":"` + darkReader + `\\` + version + `_0",` +
+		`"manifest":{"name":"Dark Reader","version":"` + version + `"},"disable_reasons":[]}`))
+	chromejson.Set(doc, "extensions.settings."+darkReader, m)
+	os.WriteFile(path, []byte(chromejson.Compact(doc)), 0o600)
+}
+
+func TestExtensionsFollowAcrossDevices(t *testing.T) {
+	ctx := context.Background()
+	server := NewMemory()
+	macUD, winUD := fakeUserData(t, ver), fakeUserData(t, ver)
+	mac, win := cfgFor(t, "mac", macUD, server), cfgFor(t, "win", winUD, server)
+	mac.GOOS, win.GOOS = "darwin", "windows"
+	macP := filepath.Join(macUD, "Default")
+	installFakeExtension(t, macP, "4.9.133", "theme=dark हिंदी")
+	LinkProfile(mac.StateDir, mac.DeviceID, "Default")
+	mustRun := func(c Config) Report {
+		t.Helper()
+		r, err := Run(ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	mustRun(mac)
+	puts := server.BlobPuts
+	mustRun(mac)
+	if server.BlobPuts != puts {
+		t.Fatalf("a second sync re-uploaded %d blob(s)", server.BlobPuts-puts)
+	}
+
+	winP := filepath.Join(winUD, "Profile 1")
+	mustRun(win)
+	list, _ := extensions.List(winP)
+	if len(list) != 1 || list[0].Version != "4.9.133" || list[0].Disabled {
+		t.Fatalf("Windows should have Dark Reader 4.9.133 enabled: %+v", list)
+	}
+	if data, _ := os.ReadFile(filepath.Join(winP, "Local Extension Settings", darkReader, "000003.log")); string(data) != "theme=dark हिंदी" {
+		t.Fatalf("extension data not carried: %q", data)
+	}
+	if n := mustRun(win).Sent; n != 0 {
+		t.Fatalf("Windows should have nothing new to send after installing, sent %d", n)
+	}
+
+	// Disable on the Mac and change its data: both follow.
+	extensions.SetEnabled(macP, darkReader, false, "x")
+	os.WriteFile(filepath.Join(macP, "Local Extension Settings", darkReader, "000003.log"), []byte("theme=light"), 0o600)
+	mustRun(mac)
+	mustRun(win)
+	list, _ = extensions.List(winP)
+	if len(list) != 1 || !list[0].Disabled {
+		t.Fatalf("disable did not follow: %+v", list)
+	}
+	if data, _ := os.ReadFile(filepath.Join(winP, "Local Extension Settings", darkReader, "000003.log")); string(data) != "theme=light" {
+		t.Fatalf("data change did not follow: %q", data)
+	}
+
+	// Uninstall on the Mac: removed on Windows, with a copy in the backup.
+	extensions.Remove(macP, darkReader, "x")
+	mustRun(mac)
+	rep := mustRun(win)
+	if list, _ := extensions.List(winP); len(list) != 0 {
+		t.Fatalf("uninstall did not follow: %+v", list)
+	}
+	found := false
+	filepath.Walk(filepath.Join(win.StateDir, "backups"), func(p string, info os.FileInfo, err error) error {
+		if err == nil && strings.Contains(p, darkReader) && strings.HasSuffix(p, "manifest.json") {
+			found = true
+		}
+		return nil
+	})
+	if !found {
+		t.Fatal("the removed extension should be kept in the sync backup")
+	}
+	t.Logf("last Windows run wrote %v", rep.Written)
 }
 
 func TestVersionGatePausesWithoutTouchingFiles(t *testing.T) {

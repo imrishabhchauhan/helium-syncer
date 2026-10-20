@@ -48,6 +48,15 @@ type ProfileState struct {
 
 	SettingsBase map[string]json.RawMessage `json:"settings_base"`
 	Settings     *crdt.Map                  `json:"settings"`
+
+	ExtBase     map[string]json.RawMessage `json:"ext_base"`
+	ExtDataBase map[string]json.RawMessage `json:"ext_data_base"`
+	Exts        *crdt.Map                  `json:"exts"`
+	ExtData     *crdt.Map                  `json:"ext_data"`
+	// Blob ids already uploaded or installed: "id@version" -> package blob,
+	// id -> latest data blob. They keep uploads to one per version/change.
+	ExtBlobs  map[string]string        `json:"ext_blobs"`
+	DataBlobs map[string]merge.ExtData `json:"data_blobs"`
 }
 
 func newProfileState() *ProfileState {
@@ -57,6 +66,9 @@ func newProfileState() *ProfileState {
 		Visits:      crdt.NewMap(), Titles: crdt.NewMap(),
 		Tabs: merge.NewTabSync(), TabMap: crdt.NewMap(), GroupMap: crdt.NewMap(),
 		SettingsBase: map[string]json.RawMessage{}, Settings: crdt.NewMap(),
+		ExtBase: map[string]json.RawMessage{}, ExtDataBase: map[string]json.RawMessage{},
+		Exts: crdt.NewMap(), ExtData: crdt.NewMap(),
+		ExtBlobs: map[string]string{}, DataBlobs: map[string]merge.ExtData{},
 	}
 }
 
@@ -134,6 +146,15 @@ func LoadState(dir, deviceID string) (*State, error) {
 	if err := json.Unmarshal(data, s); err != nil {
 		return nil, err
 	}
+	// State saved by an older version may lack newer fields.
+	for id, p := range s.Profiles {
+		fresh := newProfileState()
+		if p == nil {
+			s.Profiles[id] = fresh
+			continue
+		}
+		p.fill(fresh)
+	}
 	return s, nil
 }
 
@@ -171,4 +192,56 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// fill gives nil fields of p the empty values from fresh.
+func (p *ProfileState) fill(fresh *ProfileState) {
+	if p.BookmarksBase == nil {
+		p.BookmarksBase = fresh.BookmarksBase
+	}
+	if p.Bookmarks == nil {
+		p.Bookmarks = fresh.Bookmarks
+	}
+	if p.HistoryBase.Visits == nil {
+		p.HistoryBase = fresh.HistoryBase
+	}
+	if p.Visits == nil {
+		p.Visits = fresh.Visits
+	}
+	if p.Titles == nil {
+		p.Titles = fresh.Titles
+	}
+	if p.Tabs == nil {
+		p.Tabs = fresh.Tabs
+	}
+	if p.TabMap == nil {
+		p.TabMap = fresh.TabMap
+	}
+	if p.GroupMap == nil {
+		p.GroupMap = fresh.GroupMap
+	}
+	if p.SettingsBase == nil {
+		p.SettingsBase = fresh.SettingsBase
+	}
+	if p.Settings == nil {
+		p.Settings = fresh.Settings
+	}
+	if p.ExtBase == nil {
+		p.ExtBase = fresh.ExtBase
+	}
+	if p.ExtDataBase == nil {
+		p.ExtDataBase = fresh.ExtDataBase
+	}
+	if p.Exts == nil {
+		p.Exts = fresh.Exts
+	}
+	if p.ExtData == nil {
+		p.ExtData = fresh.ExtData
+	}
+	if p.ExtBlobs == nil {
+		p.ExtBlobs = fresh.ExtBlobs
+	}
+	if p.DataBlobs == nil {
+		p.DataBlobs = fresh.DataBlobs
+	}
 }

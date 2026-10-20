@@ -159,7 +159,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 
-	out, added, err := apply(cfg, st, clock, incoming, &j)
+	out, added, err := apply(ctx, cfg, st, clock, incoming, &j)
 	if err != nil {
 		// Put everything back exactly as it was.
 		if rerr := restore(cfg.UserData, j); rerr != nil {
@@ -215,7 +215,7 @@ func scope(ops []crdt.Op, profileID string) []crdt.Op {
 	return ops
 }
 
-func apply(cfg Config, st *State, clock *crdt.Clock, incoming []crdt.Op, j *journal) ([]crdt.Op, []string, error) {
+func apply(ctx context.Context, cfg Config, st *State, clock *crdt.Clock, incoming []crdt.Op, j *journal) ([]crdt.Op, []string, error) {
 	// Route incoming ops.
 	var profileOps []crdt.Op
 	perProfile := map[string][]crdt.Op{}
@@ -264,7 +264,7 @@ func apply(cfg Config, st *State, clock *crdt.Clock, incoming []crdt.Op, j *jour
 	sort.Strings(dirs)
 	for _, dir := range dirs {
 		pid := st.Links[dir]
-		ops, err := syncProfile(cfg, st.profile(pid), filepath.Join(cfg.UserData, dir), clock, perProfile[pid], j)
+		ops, err := syncProfile(ctx, cfg, st.profile(pid), filepath.Join(cfg.UserData, dir), clock, perProfile[pid], j)
 		if err != nil {
 			return nil, nil, fmt.Errorf("profile %q: %w", dir, err)
 		}
@@ -310,7 +310,7 @@ func readDoc(path, empty string) (map[string]any, error) {
 	return m, nil
 }
 
-func syncProfile(cfg Config, ps *ProfileState, dir string, clock *crdt.Clock, incoming []crdt.Op, j *journal) ([]crdt.Op, error) {
+func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, clock *crdt.Clock, incoming []crdt.Op, j *journal) ([]crdt.Op, error) {
 	byType := map[string][]crdt.Op{}
 	for _, op := range incoming {
 		byType[op.Type] = append(byType[op.Type], op)
@@ -391,6 +391,14 @@ func syncProfile(cfg Config, ps *ProfileState, dir string, clock *crdt.Clock, in
 		}
 		j.Written = append(j.Written, bmPath)
 	}
+
+	// Extensions (after settings: both live in Secure Preferences).
+	extOps := append(byType[merge.TypeExtension], byType[merge.TypeExtData]...)
+	ops, err = syncExtensions(ctx, cfg, ps, dir, clock, extOps, j)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, ops...)
 
 	// History: only once Helium has created the database for this profile.
 	histOps := append(byType[merge.TypeVisit], byType[merge.TypeTitle]...)

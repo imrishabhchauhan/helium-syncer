@@ -2,7 +2,10 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"sync"
 
@@ -17,6 +20,8 @@ type Memory struct {
 	names    map[string]string
 	// FailPush makes the next Push fail (to test the outbox).
 	FailPush bool
+	blobs    map[string][]byte
+	BlobPuts int // how many uploads happened
 }
 
 // NewMemory returns an empty in-memory server.
@@ -69,6 +74,31 @@ func (m *Memory) Announce(_ context.Context, device, name, version string) error
 	defer m.mu.Unlock()
 	m.versions[device], m.names[device] = version, name
 	return nil
+}
+
+// PutBlob stores data (the real server stores ciphertext; tests don't care).
+func (m *Memory) PutBlob(_ context.Context, data []byte) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.blobs == nil {
+		m.blobs = map[string][]byte{}
+	}
+	sum := sha256.Sum256(data)
+	id := hex.EncodeToString(sum[:])
+	m.blobs[id] = append([]byte(nil), data...)
+	m.BlobPuts++
+	return id, nil
+}
+
+// GetBlob returns a stored blob.
+func (m *Memory) GetBlob(_ context.Context, id string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.blobs[id]
+	if !ok {
+		return nil, errors.New("blob not found")
+	}
+	return append([]byte(nil), b...), nil
 }
 
 // Ops returns how many ops the server holds.

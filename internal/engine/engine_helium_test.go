@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imrishabhchauhan/helium-syncer/internal/cdp"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
 	"github.com/imrishabhchauhan/helium-syncer/internal/testkit"
@@ -278,6 +279,102 @@ func TestEndToEndTwoDevices(t *testing.T) {
 	if len(macNow.tabs(u)) != 3 {
 		t.Errorf("Mac should keep Gmail, Docs and the pinned tab, has %v", macNow.tabs(u))
 	}
+}
+
+// Dark Reader installed from the Web Store on the "Mac" (fixture
+// test-profiles/ext-src) arrives on "Windows" through a full sync, enabled
+// and with its data, and keeps working after Helium starts.
+func TestEndToEndExtension(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	root, _ := filepath.Abs("../..")
+	fixture := filepath.Join(root, "test-profiles", "ext-src")
+	if _, err := os.Stat(filepath.Join(fixture, "Default", "Extensions", "eimadpbcbfnmbkopoojfekhnkhdbieeh")); err != nil {
+		t.Skip("fixture test-profiles/ext-src with Dark Reader not present")
+	}
+	run := time.Now().Unix()
+	macUD := filepath.Join(root, "test-profiles", fmt.Sprintf("e2e-ext-mac-%d", run))
+	if err := copyDir(fixture, macUD); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(filepath.Join(macUD, "lockfile"))
+	machine, _ := deviceid.Get()
+	server := NewMemory()
+	mk := func(name, ud string, port int) *side {
+		return &side{name: name, ud: ud,
+			cfg:  Config{UserData: ud, StateDir: ud + "-syncer", DeviceID: name + "-device", DeviceName: name, MachineID: machine, Transport: server},
+			opts: testkit.Options{Exe: heliumExe(t), UserDataDir: ud, Port: port, ProbeDir: filepath.Join(root, "testing", "probe-extension")}}
+	}
+	mac := mk("mac", macUD, 9363)
+	win := mk("win", filepath.Join(root, "test-profiles", fmt.Sprintf("e2e-ext-win-%d", run)), 9364)
+
+	if _, err := LinkProfile(mac.cfg.StateDir, mac.cfg.DeviceID, "Default"); err != nil {
+		t.Fatal(err)
+	}
+	mac.sync(t, ctx)
+	win.helium(t, ctx, "", false, nil) // fresh Windows Helium
+	rep := win.sync(t, ctx)
+	if len(rep.ProfilesAdded) != 1 {
+		t.Fatalf("want one new profile, got %v", rep.ProfilesAdded)
+	}
+	newDir := rep.ProfilesAdded[0]
+
+	var enabled bool
+	var stored map[string]any
+	win.helium(t, ctx, newDir, false, func(in *testkit.Instance) {
+		var list []struct {
+			ID      string `json:"id"`
+			Enabled bool   `json:"enabled"`
+		}
+		eval(t, ctx, in, "probe.extensions()", &list)
+		for _, e := range list {
+			if e.ID == "eimadpbcbfnmbkopoojfekhnkhdbieeh" {
+				enabled = e.Enabled
+			}
+		}
+		for i := 0; i < 80 && stored == nil; i++ {
+			ts, _ := cdp.Targets(ctx, win.opts.Port)
+			for _, tg := range ts {
+				if tg.Type == "service_worker" && strings.Contains(tg.URL, "eimadpbcbfnmbkopoojfekhnkhdbieeh") {
+					c, err := cdp.Dial(ctx, tg.WSURL)
+					if err != nil {
+						continue
+					}
+					for k := 0; k < 40 && stored == nil; k++ {
+						var v map[string]any
+						if c.Eval(ctx, "chrome.storage.local.get(['hsTest','hsNum'])", &v) == nil && v != nil {
+							stored = v
+						}
+						time.Sleep(250 * time.Millisecond)
+					}
+					c.Close()
+				}
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	})
+	if !enabled {
+		t.Fatal("Dark Reader is missing or disabled on Windows after sync")
+	}
+	if stored["hsTest"] != "हिंदी ✓ 🚀" {
+		t.Fatalf("Dark Reader's data did not arrive: %v", stored)
+	}
+	// After Helium ran once, it must still be installed and enabled.
+	win.helium(t, ctx, newDir, false, func(in *testkit.Instance) {
+		var list []struct {
+			ID      string `json:"id"`
+			Enabled bool   `json:"enabled"`
+		}
+		time.Sleep(4 * time.Second)
+		eval(t, ctx, in, "probe.extensions()", &list)
+		ok := false
+		for _, e := range list {
+			ok = ok || (e.ID == "eimadpbcbfnmbkopoojfekhnkhdbieeh" && e.Enabled)
+		}
+		if !ok {
+			t.Errorf("Dark Reader disabled or gone after a second start: %+v", list)
+		}
+	})
 }
 
 func contains(xs []string, x string) bool {
