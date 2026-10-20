@@ -31,6 +31,7 @@ type Options struct {
 	Port        int    // remote debugging port
 	ProbeDir    string // unpacked probe extension; empty = don't load
 	NoURL       bool   // don't pass about:blank, so the startup setting (e.g. restore tabs) decides
+	ProfileDir  string // e.g. "Profile 1"; empty = Helium's last used profile
 }
 
 // Start launches Helium and waits until the probe service worker is reachable.
@@ -48,6 +49,9 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	}
 	if o.ProbeDir != "" {
 		args = append(args, "--load-extension="+o.ProbeDir)
+	}
+	if o.ProfileDir != "" {
+		args = append(args, "--profile-directory="+o.ProfileDir)
 	}
 	if !o.NoURL {
 		args = append(args, "about:blank")

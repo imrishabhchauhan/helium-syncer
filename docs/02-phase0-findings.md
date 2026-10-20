@@ -33,6 +33,43 @@ Source: `services/preferences/tracked/pref_hash_calculator.cc`, `device_id_win.c
 
 Open: confirm the same on macOS (device id = IOPlatformUUID) with a throwaway profile on the owner's Mac.
 
+## Bookmarks (`internal/bookmarks`)
+
+- `Bookmarks` is pretty-printed JSON (3-space indent, `[ a, b ]` lists, CRLF on Windows, LF elsewhere).
+- Checksum = MD5 (and SHA-256 when `checksum_sha256` exists) over, per node in encode order (bookmark_bar, other, synced; depth-first): UTF-8 id, UTF-16LE title, then `url` + URL or `folder`.
+- Chromium 155 no longer rejects a file on checksum mismatch, but we still write the correct value.
+- Every node has a `guid` that Helium keeps: the stable identity for merging across devices.
+- Test: Helium-written file (Hindi, emoji, HTML-ish titles) re-encodes byte for byte; a node added by our writer shows in Helium with its guid intact.
+
+## History (`internal/history`)
+
+- SQLite, `meta.version` = **70** (last compatible 16) — the version gate refuses anything else.
+- Visits from another device: inserted with original `visit_time`, title and transition; tagged with `originator_cache_guid` (source device) and `originator_visit_id` so they are never sent back (no echo). Same (url, visit_time) twice = skipped.
+- Helium only lists visits whose transition has the chain start/end bits (`0x30000000`); the writer adds them if missing.
+- Note: Chromium deletes history older than 90 days; older visits are pointless to sync.
+- Test: synced visits show in `chrome.history` with exact original times; typed visits count as typed; re-applying a batch adds 0.
+
+## Open tabs, pinned tabs, tab groups (`internal/sessions`)
+
+- `Sessions/Session_<time>` = SNSS **version 3, not encrypted** (version 5 would need the OS key; detect and refuse).
+- Commands `[uint16 size][uint8 id][payload]`; fixed C structs (with padding) or base::Pickle payloads. A file is restorable only if it contains the marker command 255; Helium restores the newest such file.
+- Helium 0.19.4.1 stores **no page titles** in Session files (only in `Tabs_*`, the recently-closed list); synced tabs get titles from History.
+- Tab groups: `SetTabGroup` (tab → 128-bit token) + `SetTabGroupMetadata2` (title, colour 0–8, collapsed, saved-group guid).
+- Helium only reopens tabs if "Continue where you left off" is on: `session.restore_on_startup = 1`, a protected pref — set it and re-sign.
+- Test: reader matches Helium's own tabs/pins/groups exactly; encode→parse is lossless; Helium restores added tabs, a new pinned tab and a new red group "Mac 🍎". Pinned tabs are moved to the front by Helium.
+- Not carried yet: split-view tabs, per-tab user-agent override, session storage, window workspace.
+
+## Profiles (`internal/profiles`)
+
+- Adding a profile = new `Profile N` folder with a small `Preferences` (`profile.name`, avatar) + an entry in `Local State` → `profile.info_cache` and `profile.profiles_order`.
+- Test: with "Your Helium" (Default) present, adding "Personal" and "Work 💼" gives three profiles; Helium opens both new ones and keeps their names; Default's files are untouched.
+
+## Still to do in phase 0
+
+- Saved tab groups (`Sync Data/LevelDB`, protobuf).
+- Extensions: copy `Extensions/<id>/<version>`, register in `extensions.settings`, re-sign; extension data (`Local Extension Settings`, `IndexedDB`). Needs a real Web Store extension in a test profile.
+- Repeat the whole suite on macOS (device id = IOPlatformUUID, LF files, `Cookies` path).
+
 ## Tooling notes
 
 - Windows PowerShell 5.1 strips embedded double quotes when passing arguments to native programs; lab scripts run under PowerShell 7.
