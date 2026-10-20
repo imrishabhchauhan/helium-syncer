@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/cdp"
+	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/prefhash"
 )
@@ -57,11 +58,11 @@ func macs(profile string) error {
 		if err != nil {
 			return err
 		}
-		doc, err := prefhash.Decode(data)
+		doc, err := chromejson.Decode(data)
 		if err != nil {
 			return err
 		}
-		macsTree, _ := prefhash.Lookup(doc, "protection.macs").(map[string]any)
+		macsTree, _ := chromejson.Lookup(doc, "protection.macs").(map[string]any)
 		if macsTree == nil {
 			fmt.Printf("\n[%s] no protection.macs\n", file)
 			continue
@@ -71,7 +72,7 @@ func macs(profile string) error {
 			if strings.HasSuffix(path, "_encrypted_hash") || strings.Contains(path, "_encrypted_hash.") {
 				return
 			}
-			got := calc.MAC(path, prefhash.ValueString(prefhash.Lookup(doc, path)))
+			got := calc.MAC(path, prefhash.ValueString(chromejson.Lookup(doc, path)))
 			if got == stored {
 				ok = append(ok, path)
 			} else {
@@ -83,7 +84,7 @@ func macs(profile string) error {
 		for _, p := range bad {
 			fmt.Println("  differs:", p)
 		}
-		if super, _ := prefhash.Lookup(doc, "protection.super_mac").(string); super != "" {
+		if super, _ := chromejson.Lookup(doc, "protection.super_mac").(string); super != "" {
 			got := calc.MAC("", prefhash.ValueString(macsTree))
 			fmt.Printf("[%s] super_mac match: %v\n", file, got == super)
 		}
@@ -104,7 +105,7 @@ func resign(profile string, args []string) error {
 	if err != nil {
 		return err
 	}
-	v, err := prefhash.Decode(data)
+	v, err := chromejson.Decode(data)
 	if err != nil {
 		return err
 	}
@@ -126,17 +127,17 @@ func resign(profile string, args []string) error {
 			if !ok {
 				return fmt.Errorf("bad assignment %q", a)
 			}
-			val, err := prefhash.Decode([]byte(raw))
+			val, err := chromejson.Decode([]byte(raw))
 			if err != nil {
 				return fmt.Errorf("%s: %w", path, err)
 			}
-			prefhash.Set(doc, path, val)
+			chromejson.Set(doc, path, val)
 			extra = append(extra, path)
 		}
 	}
 	n := prefhash.Resign(doc, prefhash.Calculator{DeviceID: dev}, drop, extra...)
 	tmp := file + ".hs-tmp"
-	if err := os.WriteFile(tmp, []byte(prefhash.WriteJSON(doc)), 0o600); err != nil {
+	if err := os.WriteFile(tmp, []byte(chromejson.Compact(doc)), 0o600); err != nil {
 		return err
 	}
 	if err := os.Rename(tmp, file); err != nil {
@@ -153,11 +154,11 @@ func roundtrip(file string) error {
 	if err != nil {
 		return err
 	}
-	doc, err := prefhash.Decode(data)
+	doc, err := chromejson.Decode(data)
 	if err != nil {
 		return err
 	}
-	got := prefhash.WriteJSON(doc)
+	got := chromejson.Compact(doc)
 	want := string(data)
 	if got == want {
 		fmt.Printf("roundtrip OK: %d bytes identical\n", len(want))

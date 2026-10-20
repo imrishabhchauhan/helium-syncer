@@ -1,12 +1,16 @@
 package prefhash
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
+)
 
 // Resign recomputes every legacy MAC listed in doc's protection.macs and the
 // super_mac, for this calculator's device id. When dropEncrypted is true, the
 // os_crypt-based *_encrypted_hash entries and super_encrypted_hash are
-// removed (they cannot be valid on another device), leaving Chromium to
-// rebuild them from the now-valid legacy MACs.
+// removed (they cannot be valid on another device); Helium then rebuilds them
+// from the now-valid legacy MACs (verified in phase 0).
 //
 // extraPaths are added to protection.macs so newly written protected values
 // get a MAC too. It returns the number of MACs written.
@@ -22,7 +26,7 @@ func Resign(doc map[string]any, c Calculator, dropEncrypted bool, extraPaths ...
 		protection["macs"] = macs
 	}
 	for _, p := range extraPaths {
-		setPath(macs, p, "")
+		chromejson.Set(macs, p, "")
 	}
 	n := 0
 	var visit func(node map[string]any, prefix string)
@@ -32,7 +36,7 @@ func Resign(doc map[string]any, c Calculator, dropEncrypted bool, extraPaths ...
 			if prefix != "" {
 				p = prefix + "." + k
 			}
-			if isEncryptedKey(k) {
+			if strings.HasSuffix(k, "_encrypted_hash") {
 				if dropEncrypted {
 					delete(node, k)
 				}
@@ -40,7 +44,7 @@ func Resign(doc map[string]any, c Calculator, dropEncrypted bool, extraPaths ...
 			}
 			switch t := v.(type) {
 			case string:
-				node[k] = c.MAC(p, ValueString(Lookup(doc, p)))
+				node[k] = c.MAC(p, ValueString(chromejson.Lookup(doc, p)))
 				n++
 			case map[string]any:
 				visit(t, p)
@@ -54,22 +58,3 @@ func Resign(doc map[string]any, c Calculator, dropEncrypted bool, extraPaths ...
 	}
 	return n
 }
-
-func isEncryptedKey(k string) bool { return strings.HasSuffix(k, "_encrypted_hash") }
-
-func setPath(root map[string]any, path string, v any) {
-	parts := strings.Split(path, ".")
-	cur := root
-	for _, part := range parts[:len(parts)-1] {
-		next, _ := cur[part].(map[string]any)
-		if next == nil {
-			next = map[string]any{}
-			cur[part] = next
-		}
-		cur = next
-	}
-	cur[parts[len(parts)-1]] = v
-}
-
-// Set writes v at a dotted path inside doc, creating dictionaries as needed.
-func Set(doc map[string]any, path string, v any) { setPath(doc, path, v) }
