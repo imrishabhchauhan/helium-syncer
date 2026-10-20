@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/prefhash"
+	_ "modernc.org/sqlite"
 )
 
 func main() {
@@ -30,6 +32,8 @@ func main() {
 		err = macs(os.Args[2])
 	case "resign":
 		err = resign(os.Args[2], os.Args[3:])
+	case "schema":
+		err = schema(os.Args[2])
 	case "roundtrip":
 		err = roundtrip(os.Args[2])
 	case "close":
@@ -145,6 +149,44 @@ func resign(profile string, args []string) error {
 	}
 	fmt.Printf("re-signed %d MACs (encrypted hashes dropped: %v)\n", n, drop)
 	return nil
+}
+
+// schema prints the meta table and CREATE statements of a SQLite database,
+// reading a temporary copy so the original is never opened.
+func schema(file string) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	tmp := filepath.Join(os.TempDir(), "hslab-schema.db")
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(tmp)+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if rows, err := db.Query("SELECT key, value FROM meta ORDER BY key"); err == nil {
+		for rows.Next() {
+			var k, v string
+			rows.Scan(&k, &v)
+			fmt.Printf("meta %s = %s\n", k, v)
+		}
+		rows.Close()
+	}
+	rows, err := db.Query("SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type DESC, name")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var typ, name, stmt string
+		rows.Scan(&typ, &name, &stmt)
+		fmt.Printf("\n-- %s %s\n%s\n", typ, name, stmt)
+	}
+	return rows.Err()
 }
 
 // roundtrip checks that our serialiser reproduces a Chromium-written JSON
