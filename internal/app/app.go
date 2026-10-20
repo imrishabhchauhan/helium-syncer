@@ -37,6 +37,7 @@ type Config struct {
 	RestoreTabs bool      `json:"restore_tabs"`
 	LastSync    time.Time `json:"last_sync"`
 	LastError   string    `json:"last_error,omitempty"`
+	SetupDone   bool      `json:"setup_done"` // the first-sync preview was approved
 }
 
 // ErrNotConnected: run start or join first.

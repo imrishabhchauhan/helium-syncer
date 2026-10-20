@@ -34,6 +34,9 @@ var DefaultTiming = Timing{Poll: 2 * time.Second, AfterQuit: 4 * time.Second, Wh
 // LockAddr is a local port held while an agent runs (one agent at a time).
 const LockAddr = "127.0.0.1:47811"
 
+// ErrNotSetUp means the first-sync preview has not been approved yet.
+var ErrNotSetUp = errors.New("setup is not finished: approve the first-sync preview in Helium Syncer")
+
 // ErrAlreadyRunning means another agent holds the lock.
 var ErrAlreadyRunning = errors.New("Helium Syncer is already running in the background")
 
@@ -89,6 +92,10 @@ func New() (*Agent, error) {
 		c, err := app.Load() // pick up changes made from the command line
 		if err != nil {
 			return engine.Report{}, err
+		}
+		if !c.SetupDone {
+			// Never sync before the person approved the first-sync preview.
+			return engine.Report{}, ErrNotSetUp
 		}
 		ec, err := c.EngineConfig()
 		if err != nil {
@@ -205,6 +212,11 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	defer a.Status.mu.Unlock()
 	a.Status.Syncing = false
 	switch {
+	case errors.Is(err, ErrNotSetUp):
+		return nil // quietly wait for the person
+	case errors.Is(err, engine.ErrBusy):
+		a.logf("%s: another sync is running; will try again", reason)
+		return nil
 	case errors.Is(err, engine.ErrHeliumRunning):
 		a.logf("%s: Helium opened before the sync started; will retry after it quits", reason)
 		return nil

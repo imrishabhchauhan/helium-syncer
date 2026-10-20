@@ -25,3 +25,6 @@ func StartDetached() error {
 
 // LaunchHelium opens Helium.
 func LaunchHelium() error { return exec.Command("helium").Start() }
+
+// OpenBrowser opens a URL in the default browser.
+func OpenBrowser(url string) error { return exec.Command("xdg-open", url).Start() }

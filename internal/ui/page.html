@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Helium Syncer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700&family=Geist+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --page: #F7F6F3; --card: #FFFFFF; --ink: #1A1D24; --muted: #5B6170; --line: #D9D9DE; --line-soft: #ECECEF;
+  --blue: #1560EF; --blue-ink: #FFFFFF; --blue-soft: #E7EEFE; --blue-text: #0F4BBE;
+  --green: #48A30C; --green-text: #2F7A06; --green-soft: #E8F5DC;
+  --purple: #6941C6; --purple-soft: #EFE9FB; --warn-soft: #FBF3DB; --warn-text: #7A5A00;
+  --danger: #B42318; --shadow: 0 1px 2px rgba(26,29,36,.06), 0 4px 16px rgba(26,29,36,.05);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --page: #2A2C33; --card: #34373F; --ink: #EDEEF2; --muted: #B4B8C3; --line: #4A4E58; --line-soft: #3E414A;
+  --blue: #6EA0FF; --blue-ink: #10213F; --blue-soft: #33405C; --blue-text: #A9C6FF;
+  --green: #7FD13B; --green-text: #A6E36F; --green-soft: #39492F;
+  --purple: #B49BFF; --purple-soft: #44405A; --warn-soft: #4A4330; --warn-text: #F2D37A;
+  --danger: #FF8A80; --shadow: 0 1px 2px rgba(0,0,0,.2), 0 4px 16px rgba(0,0,0,.18);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.55 Inter, system-ui, sans-serif; }
+h1, h2, h3 { font-family: "Plus Jakarta Sans", Inter, sans-serif; margin: 0; letter-spacing: -.01em; }
+h1 { font-size: 26px; font-weight: 700; } h2 { font-size: 19px; font-weight: 700; } h3 { font-size: 15px; font-weight: 600; }
+p { margin: 0; } .muted { color: var(--muted); } .small { font-size: 13px; }
+.wrap { max-width: 680px; margin: 0 auto; padding: 20px 16px 48px; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 22px; }
+.brand { display: flex; align-items: center; gap: 10px; font-family: "Plus Jakarta Sans", sans-serif; font-weight: 700; font-size: 17px; }
+.logo { width: 30px; height: 30px; border-radius: 9px; background: var(--blue); display: grid; place-items: center; }
+.logo svg { width: 18px; height: 18px; stroke: var(--blue-ink); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 22px; box-shadow: var(--shadow); }
+.stack > * + * { margin-top: 14px; } .stack-lg > * + * { margin-top: 20px; }
+.steps { display: flex; gap: 6px; margin-bottom: 14px; }
+.steps span { height: 4px; flex: 1; border-radius: 4px; background: var(--line-soft); }
+.steps span.on { background: var(--blue); }
+button, .btn { font: 600 15px Inter, sans-serif; height: 44px; padding: 0 18px; border-radius: 10px; cursor: pointer; border: 1px solid transparent; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.primary { background: var(--blue); color: var(--blue-ink); }
+.primary:hover { filter: brightness(1.06); }
+.secondary { background: var(--card); color: var(--ink); border-color: var(--line); }
+.secondary:hover { border-color: var(--muted); }
+.link { background: none; border: none; color: var(--blue-text); padding: 0; height: auto; font-weight: 500; }
+button:disabled { opacity: .5; cursor: not-allowed; filter: none; }
+button:focus-visible, input:focus-visible, .choice:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.row.end { justify-content: flex-end; }
+.choice { display: flex; justify-content: flex-start; gap: 14px; align-items: flex-start; text-align: left; width: 100%; height: auto; padding: 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--ink); font-weight: 400; }
+.choice:hover { border-color: var(--blue); }
+.choice .ic { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; }
+.choice .ic svg { width: 22px; height: 22px; }
+.choice b { display: block; font: 600 16px "Plus Jakarta Sans", sans-serif; margin-bottom: 2px; }
+svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+input[type=text] { width: 100%; height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); padding: 0 14px; font: 15px Inter, sans-serif; }
+input[type=text]:focus { border-color: var(--blue); outline: none; }
+input.code { font-family: "Geist Mono", ui-monospace, monospace; letter-spacing: .04em; text-transform: uppercase; }
+label.field { display: block; font-weight: 500; margin-bottom: 6px; }
+.codebox { font: 500 22px "Geist Mono", ui-monospace, monospace; letter-spacing: .06em; padding: 18px; border-radius: 12px; background: var(--blue-soft); color: var(--blue-text); text-align: center; word-break: break-word; }
+.check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.check input { width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--blue); flex: none; }
+.toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.toggle:first-child { border-top: none; }
+.switch { position: relative; width: 44px; height: 26px; flex: none; }
+.switch input { opacity: 0; width: 100%; height: 100%; position: absolute; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 26px; background: var(--line); transition: background .2s; pointer-events: none; }
+.switch span::after { content: ""; position: absolute; width: 20px; height: 20px; top: 3px; left: 3px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.switch input:checked + span { background: var(--blue); }
+.switch input:checked + span::after { transform: translateX(18px); }
+.switch input:focus-visible + span { outline: 2px solid var(--blue); outline-offset: 2px; }
+.badge { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; font-size: 13px; font-weight: 500; }
+.b-green { background: var(--green-soft); color: var(--green-text); } .b-blue { background: var(--blue-soft); color: var(--blue-text); }
+.b-purple { background: var(--purple-soft); color: var(--purple); } .b-warn { background: var(--warn-soft); color: var(--warn-text); }
+.status { display: flex; gap: 18px; align-items: center; }
+.ring { width: 64px; height: 64px; flex: none; position: relative; }
+.ring svg { width: 64px; height: 64px; }
+.ring .center { position: absolute; inset: 0; display: grid; place-items: center; }
+.ring .center svg { width: 26px; height: 26px; stroke-width: 2; }
+.spin { animation: spin 1.1s linear infinite; transform-origin: 50% 50%; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } .switch span, .switch span::after { transition: none; } }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); gap: 8px; }
+.stat { border: 1px solid var(--line-soft); border-radius: 12px; padding: 12px; }
+.stat b { display: block; font: 700 22px "Plus Jakarta Sans", sans-serif; }
+.list > div { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+.list > div:first-child { border-top: none; }
+.dev-ic { width: 36px; height: 36px; border-radius: 10px; background: var(--blue-soft); color: var(--blue-text); display: grid; place-items: center; flex: none; }
+.dev-ic svg { width: 20px; height: 20px; }
+.grow { flex: 1; min-width: 0; }
+.err { background: var(--warn-soft); color: var(--warn-text); border-radius: 12px; padding: 12px 14px; }
+.hide { display: none !important; }
+details summary { cursor: pointer; font-weight: 600; list-style: none; display: flex; align-items: center; justify-content: space-between; }
+details summary::-webkit-details-marker { display: none; }
+footer { margin-top: 28px; text-align: center; }
+.theme-btn { width: 44px; padding: 0; }
+.theme-btn svg { width: 20px; height: 20px; }
+::-webkit-scrollbar { width: 8px; } ::-webkit-scrollbar-thumb { background: transparent; border-radius: 8px; }
+:hover::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--muted) 40%, transparent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="logo"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6"/><path d="M18 3v4h-4M6 21v-4h4"/></svg></span>Helium Syncer</div>
+    <button class="secondary theme-btn" id="theme" aria-label="Switch light or dark"></button>
+  </header>
+
+  <div id="error" class="err hide" role="alert"></div>
+
+  <!-- 1. Welcome -->
+  <section id="v-welcome" class="hide stack-lg">
+    <div class="stack">
+      <h1>Sync Helium between your computers</h1>
+      <p class="muted">Bookmarks, tabs, history, profiles, settings and extensions. Encrypted on this computer before it leaves.</p>
+    </div>
+    <div class="stack">
+      <button class="choice" id="go-start">
+        <span class="ic b-blue"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span>
+        <span><b>This is my first computer</b><span class="muted">Start a new sync and get a sync code.</span></span>
+      </button>
+      <button class="choice" id="go-join">
+        <span class="ic b-purple"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+        <span><b>I already use Helium Syncer on another computer</b><span class="muted">Join with your sync code.</span></span>
+      </button>
+    </div>
+    <div class="card stack">
+      <label class="field" for="devname">Name of this computer</label>
+      <input type="text" id="devname" maxlength="60">
+      <p class="muted small">Shown on your other computers.</p>
+    </div>
+  </section>
+
+  <!-- 1b. Join -->
+  <section id="v-join" class="hide">
+    <div class="card stack-lg">
+      <div class="steps"><span class="on"></span><span></span><span></span></div>
+      <div class="stack"><h2>Enter your sync code</h2><p class="muted">Find it on your other computer: Helium Syncer → Settings → Show sync code.</p></div>
+      <input type="text" class="code" id="joincode" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false">
+      <div class="row end"><button class="secondary" data-back>Back</button><button class="primary" id="do-join">Join</button></div>
+    </div>
+  </section>
+
+  <!-- 2. Save code -->
+  <section id="v-code" class="hide">
+    <div class="card stack-lg">
+      <div class="steps"><span class="on"></span><span></span><span></span></div>
+      <div class="stack"><h2>Save your sync code</h2><p class="muted">You need it to add your other computers. Keep it private: anyone with it can join your sync. Nobody can recover it for you.</p></div>
+      <div class="codebox" id="freshcode"></div>
+      <div class="row"><button class="secondary" id="copy-code">Copy code</button></div>
+      <label class="check"><input type="checkbox" id="saved"><span>I saved it in my password manager</span></label>
+      <div class="row end"><button class="primary" id="code-done" disabled>Continue</button></div>
+    </div>
+  </section>
+
+  <!-- 3. Profiles -->
+  <section id="v-profiles" class="hide">
+    <div class="card stack-lg">
+      <div class="steps"><span class="on"></span><span class="on"></span><span></span></div>
+      <div class="stack"><h2>Which profiles on this computer should sync?</h2><p class="muted">Profiles from your other computers are added next to these. Nothing is deleted.</p></div>
+      <div id="profile-list"></div>
+      <div class="row end"><button class="primary" id="profiles-done">Continue</button></div>
+    </div>
+  </section>
+
+  <!-- 4. Preview -->
+  <section id="v-preview" class="hide">
+    <div class="card stack-lg">
+      <div class="steps"><span class="on"></span><span class="on"></span><span class="on"></span></div>
+      <div class="stack"><h2>Check before the first sync</h2><p class="muted" id="preview-note">Looking at what will change…</p></div>
+      <div id="preview-body" class="stack"></div>
+      <div class="stack">
+        <div class="toggle"><div><h3>Sync automatically</h3><p class="muted small">After you quit Helium, and every few minutes while it's closed.</p></div><label class="switch"><input type="checkbox" id="p-auto" aria-label="Sync automatically" checked><span></span></label></div>
+        <div class="toggle"><div><h3>Reopen synced tabs when Helium starts</h3><p class="muted small">Turns on Helium's "Continue where you left off".</p></div><label class="switch"><input type="checkbox" id="p-restore" aria-label="Reopen synced tabs when Helium starts" checked><span></span></label></div>
+      </div>
+      <div class="row end"><button class="secondary" id="preview-again">Check again</button><button class="primary" id="start-sync" disabled>Start syncing</button></div>
+    </div>
+  </section>
+
+  <!-- 5. Home -->
+  <section id="v-home" class="hide stack-lg">
+    <div class="card stack-lg">
+      <div class="status">
+        <div class="ring" id="ring"></div>
+        <div class="grow stack"><h2 id="st-title"></h2><p class="muted" id="st-sub"></p></div>
+      </div>
+      <div class="grid" id="st-stats"></div>
+      <div class="row"><button class="primary" id="sync-now">Sync now</button><button class="secondary" id="open-helium">Open Helium</button></div>
+    </div>
+    <div class="card stack">
+      <h3>Your computers</h3>
+      <div class="list" id="devices"></div>
+    </div>
+    <div class="card">
+      <details id="settings">
+        <summary>Settings <svg viewBox="0 0 24 24" width="18" height="18"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <div class="stack" style="margin-top:14px">
+          <div class="toggle"><div><h3>Sync automatically</h3><p class="muted small">Starts when you log in.</p></div><label class="switch"><input type="checkbox" id="s-auto" aria-label="Sync automatically"><span></span></label></div>
+          <div class="toggle"><div><h3>Reopen synced tabs when Helium starts</h3></div><label class="switch"><input type="checkbox" id="s-restore" aria-label="Reopen synced tabs when Helium starts"><span></span></label></div>
+          <div class="toggle"><div><h3>Profiles</h3><p class="muted small" id="s-profiles"></p></div><button class="secondary" id="edit-profiles">Change</button></div>
+          <div class="toggle"><div><h3>Sync code</h3><p class="muted small" id="s-code">Hidden</p></div><button class="secondary" id="show-code">Show</button></div>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <footer class="muted small">Helium Syncer <span id="ver"></span> · Unofficial, open source, not affiliated with Helium or imput.</footer>
+</div>
+
+<script>
+const key = new URLSearchParams(location.hash.slice(1)).get("k") || "";
+const $ = (id) => document.getElementById(id);
+const views = ["welcome", "join", "code", "profiles", "preview", "home"];
+let state = null, view = null, flow = null, previewing = false, previewDone = false;
+
+async function api(path, body) {
+  const res = await fetch("/api/" + path, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "X-Key": key, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Something went wrong.");
+  return data;
+}
+function show(v) { view = v; views.forEach((n) => $("v-" + n).classList.toggle("hide", n !== v)); hideError(); window.scrollTo(0, 0); }
+function showError(e) { $("error").textContent = e.message || String(e); $("error").classList.remove("hide"); }
+function hideError() { $("error").classList.add("hide"); }
+async function guard(btn, fn) { btn.disabled = true; try { await fn(); } catch (e) { showError(e); } finally { btn.disabled = false; } }
+const icons = {
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', sync: '<path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6"/><path d="M18 3v4h-4M6 21v-4h4"/>',
+  pause: '<path d="M9 6v12M15 6v12"/>', open: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l2.5 2.5"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>',
+  laptop: '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>', warn: '<path d="M12 8v5M12 16.5v.5"/><circle cx="12" cy="12" r="9"/>',
+};
+const svg = (n, extra = "") => `<svg viewBox="0 0 24 24" ${extra}>${icons[n]}</svg>`;
+
+// Theme: light first, remembered per computer.
+function applyTheme(t) { document.documentElement.dataset.theme = t; $("theme").innerHTML = svg(t === "dark" ? "sun" : "moon"); }
+let theme = "light"; try { theme = localStorage.getItem("hs-theme") || "light"; } catch {}
+applyTheme(theme);
+$("theme").onclick = () => { theme = theme === "dark" ? "light" : "dark"; applyTheme(theme); try { localStorage.setItem("hs-theme", theme); } catch {} };
+
+function ago(ms) {
+  if (!ms) return "never";
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 86400) return Math.round(s / 3600) + " h ago";
+  return new Date(ms).toLocaleDateString();
+}
+const label = { bookmark: ["bookmark", "bookmarks"], visit: ["visit", "visits"], tab: ["tab", "tabs"], group: ["tab group", "tab groups"],
+  setting: ["setting", "settings"], profile: ["profile", "profiles"], ext: ["extension", "extensions"], "ext-data": ["extension's data", "extensions' data"] };
+const plain = (m) => Object.entries(m || {}).filter(([k]) => label[k]).map(([k, v]) => `${v.toLocaleString()} ${label[k][v === 1 ? 0 : 1]}`).join(", ");
+
+function ring(kind) {
+  const color = { ok: "var(--green)", busy: "var(--blue)", wait: "var(--blue)", warn: "var(--warn-text)" }[kind];
+  const track = `<circle cx="32" cy="32" r="27" stroke="var(--line-soft)" stroke-width="5" fill="none"/>`;
+  const arc = kind === "busy"
+    ? `<circle class="spin" cx="32" cy="32" r="27" stroke="${color}" stroke-width="5" fill="none" stroke-dasharray="60 120"/>`
+    : `<circle cx="32" cy="32" r="27" stroke="${color}" stroke-width="5" fill="none"/>`;
+  const icon = { ok: "check", busy: "sync", wait: "pause", warn: "warn" }[kind];
+  return `<svg viewBox="0 0 64 64">${track}${arc}</svg><div class="center" style="color:${color}">${svg(icon)}</div>`;
+}
+
+function renderHome() {
+  const s = state;
+  let kind = "ok", title = "Up to date", sub = "Last sync " + ago(s.lastSync);
+  if (s.syncing) { kind = "busy"; title = "Syncing…"; sub = "Keep Helium closed for a moment."; }
+  else if (s.paused) { kind = "warn"; title = "Sync paused"; sub = s.paused; }
+  else if (s.lastError) { kind = "warn"; title = "Sync needs attention"; sub = s.lastError; }
+  else if (s.heliumOpen) { kind = "wait"; title = "Helium is open"; sub = "Your changes sync when you quit Helium."; }
+  else if (!s.lastSync) { title = "Ready"; sub = "Nothing synced yet."; }
+  $("ring").innerHTML = ring(kind);
+  $("st-title").textContent = title; $("st-sub").textContent = sub;
+  const r = s.lastReport;
+  const stats = [
+    ["Profiles syncing", s.profiles.filter((p) => p.synced).length],
+    ["Last sync sent", r ? r.Sent : 0],
+    ["Last sync got", r ? r.Received : 0],
+  ];
+  $("st-stats").innerHTML = stats.map(([l, v]) => `<div class="stat"><b>${Number(v).toLocaleString()}</b><span class="muted small">${l}</span></div>`).join("");
+  $("sync-now").disabled = s.heliumOpen || s.syncing;
+  $("sync-now").title = s.heliumOpen ? "Quit Helium first" : "";
+  $("s-auto").checked = s.autostart; $("s-restore").checked = s.restoreTabs;
+  $("s-profiles").textContent = s.profiles.filter((p) => p.synced).map((p) => p.name).join(", ") || "None";
+}
+
+async function loadDevices() {
+  try {
+    const d = await api("devices");
+    $("devices").innerHTML = d.devices.map((x) => `<div><span class="dev-ic">${svg("laptop")}</span><div class="grow"><b>${esc(x.name)}</b>${x.id === d.me ? ' <span class="badge b-blue">This computer</span>' : ""}<div class="muted small">${x.platform === "macos" ? "macOS" : x.platform === "windows" ? "Windows" : esc(x.platform)} · Helium ${esc(x.helium_version || "—")} · seen ${ago(x.last_seen)}</div></div>${x.id === d.me ? "" : `<button class="secondary" data-remove="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button>`}</div>`).join("");
+  } catch (e) { $("devices").innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+$("devices").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-remove]"); if (!b) return;
+  if (!confirm(`Remove "${b.dataset.name}" from your sync? It can rejoin only with the sync code.`)) return;
+  await guard(b, async () => { await api("remove-device", { id: b.dataset.remove }); await loadDevices(); });
+});
+
+function renderProfiles() {
+  const list = state.profiles;
+  const anySynced = list.some((p) => p.synced);
+  $("profile-list").innerHTML = list.map((p) => {
+    const on = anySynced ? p.synced : !p.empty;
+    return `<div class="toggle"><div><h3>${esc(p.name)}</h3><p class="muted small">${p.empty ? "Looks new or empty" : "Has bookmarks or history"}</p></div><label class="switch"><input type="checkbox" data-dir="${esc(p.dir)}" aria-label="Sync ${esc(p.name)}" ${on ? "checked" : ""}><span></span></label></div>`;
+  }).join("") || '<p class="muted">No Helium profiles found on this computer.</p>';
+}
+
+async function runPreview() {
+  if (previewing) return; previewing = true;
+  $("start-sync").disabled = true; $("preview-body").innerHTML = "";
+  $("preview-note").textContent = "Looking at what will change…";
+  try {
+    if (state.heliumOpen) { $("preview-note").textContent = "Quit Helium first (Cmd+Q on Mac). This page checks again by itself."; return; }
+    const p = await api("preview", { restoreTabs: $("p-restore").checked });
+    const rows = [];
+    if (p.Sent) rows.push(`<div><span class="badge b-blue">Send</span> ${plain(p.SentByType)}</div>`);
+    if (p.Received) rows.push(`<div><span class="badge b-purple">Receive</span> ${plain(p.ReceivedByType)}</div>`);
+    if ((p.ProfilesAdded || []).length) rows.push(`<div><span class="badge b-green">Add</span> ${p.ProfilesAdded.length} profile(s) from your other computers, next to yours</div>`);
+    const changes = (p.WouldChange || []).length + (p.WouldCreate || []).length;
+    rows.push(`<div><span class="badge ${changes ? "b-warn" : "b-green"}">${changes ? "Change" : "Safe"}</span> ${changes ? `${changes} Helium file on this computer will be updated. A backup is taken first.` : "No Helium file on this computer will change."}</div>`);
+    $("preview-body").innerHTML = rows.join("");
+    $("preview-note").textContent = "Nothing has been changed or sent yet.";
+    $("start-sync").disabled = false;
+    previewDone = true;
+  } catch (e) { showError(e); $("preview-note").textContent = "The check did not finish."; }
+  finally { previewing = false; }
+}
+
+function route() {
+  if (!state.connected) { if (!["welcome", "join"].includes(view)) show("welcome"); return; }
+  if (state.freshCode) { if (view !== "code") { $("freshcode").textContent = state.freshCode; $("saved").checked = false; $("code-done").disabled = true; show("code"); } return; }
+  if (!state.setupDone && flow !== "preview") flow = "profiles";
+  if (flow === "profiles") { if (view !== "profiles") { renderProfiles(); show("profiles"); } return; }
+  if (flow === "preview") {
+    if (view !== "preview") { previewDone = false; show("preview"); runPreview(); }
+    else if (!previewDone && !state.heliumOpen) runPreview(); // Helium was quit: check now
+    return;
+  }
+  if (view !== "home") { show("home"); loadDevices(); }
+  renderHome();
+}
+
+async function refresh() {
+  try { state = await api("state"); $("ver").textContent = state.appVersion; if (!$("devname").value) $("devname").value = state.deviceName; route(); }
+  catch (e) { showError(e); }
+}
+
+$("go-start").onclick = (e) => guard(e.currentTarget, async () => { state = await api("start", { name: $("devname").value }); route(); });
+$("go-join").onclick = () => { show("join"); $("joincode").focus(); };
+document.querySelectorAll("[data-back]").forEach((b) => (b.onclick = () => show("welcome")));
+$("do-join").onclick = (e) => guard(e.currentTarget, async () => { state = await api("join", { code: $("joincode").value, name: $("devname").value }); flow = null; route(); });
+$("joincode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("do-join").click(); });
+$("copy-code").onclick = async () => { try { await navigator.clipboard.writeText($("freshcode").textContent); $("copy-code").textContent = "Copied"; setTimeout(() => ($("copy-code").textContent = "Copy code"), 1500); } catch { showError(new Error("Copy did not work; select the code and copy it.")); } };
+$("saved").onchange = () => ($("code-done").disabled = !$("saved").checked);
+$("code-done").onclick = (e) => guard(e.currentTarget, async () => { state = await api("code-saved", {}); flow = "profiles"; route(); });
+$("profiles-done").onclick = (e) => guard(e.currentTarget, async () => {
+  const sync = [...document.querySelectorAll("#profile-list input:checked")].map((i) => i.dataset.dir);
+  state = await api("profiles", { sync });
+  flow = state.setupDone ? null : "preview"; route();
+});
+$("preview-again").onclick = () => runPreview();
+$("p-restore").onchange = () => runPreview(); // the preview must match what Start syncing will do
+$("start-sync").onclick = (e) => guard(e.currentTarget, async () => {
+  await api("settings", { autostart: $("p-auto").checked, restoreTabs: $("p-restore").checked, setupDone: true });
+  await api("sync", {});
+  flow = null; await refresh();
+});
+$("sync-now").onclick = (e) => guard(e.currentTarget, async () => { await api("sync", {}); await refresh(); });
+$("open-helium").onclick = (e) => guard(e.currentTarget, () => api("open-helium", {}));
+$("s-auto").onchange = (e) => api("settings", { autostart: e.target.checked }).catch(showError);
+$("s-restore").onchange = (e) => api("settings", { restoreTabs: e.target.checked }).catch(showError);
+$("edit-profiles").onclick = () => { flow = "profiles"; view = null; route(); };
+$("show-code").onclick = async (e) => {
+  if ($("s-code").dataset.shown) { $("s-code").textContent = "Hidden"; delete $("s-code").dataset.shown; e.target.textContent = "Show"; return; }
+  try { const c = await api("code"); $("s-code").textContent = c.code; $("s-code").style.fontFamily = "Geist Mono, monospace"; $("s-code").dataset.shown = "1"; e.target.textContent = "Hide"; } catch (err) { showError(err); }
+};
+
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 3000);
+</script>
+</body>
+</html>

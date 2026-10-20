@@ -77,6 +77,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 		return rep, err
 	}
+	unlock, err := lockState(cfg.StateDir)
+	if err != nil {
+		return rep, err
+	}
+	defer unlock()
 	if running, err := helium.IsRunning(cfg.UserData); err != nil {
 		return rep, err
 	} else if running {

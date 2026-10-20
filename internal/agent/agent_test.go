@@ -99,3 +99,32 @@ func TestOnlyOneAgent(t *testing.T) {
 		t.Fatalf("a second agent must be refused, got %v", err)
 	}
 }
+
+// Before the first-sync preview is approved, the agent must do nothing.
+func TestAgentWaitsForSetup(t *testing.T) {
+	f := &fake{open: false}
+	a := newTestAgent(f)
+	approved := false
+	inner := a.Sync
+	a.Sync = func(ctx context.Context) (engine.Report, error) {
+		if !approved {
+			return engine.Report{}, ErrNotSetUp
+		}
+		return inner(ctx)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	time.Sleep(300 * time.Millisecond)
+	f.mu.Lock()
+	n := len(f.syncs)
+	f.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("synced %d time(s) before setup was approved", n)
+	}
+	if st := a.Status.Snapshot(); st.LastError != "" {
+		t.Fatalf("waiting for setup is not an error: %q", st.LastError)
+	}
+	cancel()
+	<-done
+}

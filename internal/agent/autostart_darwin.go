@@ -74,3 +74,6 @@ func StartDetached() error {
 func LaunchHelium() error {
 	return exec.Command("/usr/bin/open", "-b", "net.imput.helium").Run()
 }
+
+// OpenBrowser opens a URL in the default browser.
+func OpenBrowser(url string) error { return exec.Command("/usr/bin/open", url).Start() }

@@ -340,3 +340,29 @@ func TestVersionGatePausesWithoutTouchingFiles(t *testing.T) {
 		t.Fatal("a paused sync changed Helium's files")
 	}
 }
+
+func TestOnlyOneSyncAtATime(t *testing.T) {
+	dir := t.TempDir()
+	unlock, err := lockState(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lockState(dir); err != ErrBusy {
+		t.Fatalf("a second sync must wait, got %v", err)
+	}
+	unlock()
+	u2, err := lockState(dir)
+	if err != nil {
+		t.Fatalf("after unlock the lock must be free: %v", err)
+	}
+	u2()
+	// A lock left by a crash long ago does not block forever.
+	os.WriteFile(filepath.Join(dir, "run.lock"), []byte("1"), 0o600)
+	old := time.Now().Add(-2 * staleLock)
+	os.Chtimes(filepath.Join(dir, "run.lock"), old, old)
+	u3, err := lockState(dir)
+	if err != nil {
+		t.Fatalf("a stale lock must be taken over: %v", err)
+	}
+	u3()
+}

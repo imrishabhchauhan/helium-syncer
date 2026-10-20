@@ -21,12 +21,14 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
+	"github.com/imrishabhchauhan/helium-syncer/internal/ui"
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
 )
 
 const usage = `Helium Syncer %s — sync Helium between your computers (unofficial, not affiliated with Helium/imput)
 
 Getting started
+  helium-syncer ui                  open the Helium Syncer window (easiest)
   helium-syncer start               start a new sync on this computer and show its sync code
   helium-syncer join <sync code>    join a sync from another computer
   helium-syncer link <profile>      choose a local profile to sync (folder or name)
@@ -64,6 +66,7 @@ func main() {
 	server := fs.String("server", "", "sync server (self-hosting)")
 	dry := fs.Bool("dry-run", false, "show what would change, change nothing")
 	restore := fs.Bool("restore-tabs", false, "turn on Helium's 'Continue where you left off' so synced tabs open")
+	fsNoOpen := fs.Bool("no-open", false, "ui: print the address instead of opening the browser")
 	// Allow flags after positional arguments.
 	var pos []string
 	for len(args) > 0 {
@@ -74,6 +77,7 @@ func main() {
 			args = args[1:]
 		}
 	}
+	noOpen = *fsNoOpen
 	if err := run(cmd, pos, *folder, *name, *server, *dry, *restore); err != nil {
 		fmt.Fprintln(os.Stderr, "✗", err)
 		os.Exit(1)
@@ -203,17 +207,29 @@ func run(cmd string, pos []string, folder, name, server string, dry, restore boo
 			return nil
 		}
 		cfg.LastSync, cfg.LastError = time.Now(), ""
+		cfg.SetupDone = true // a sync run on purpose counts as approval
 		printReport(rep)
 		return cfg.Save()
 	case "status":
 		return status(ctx, cfg)
 	case "agent":
 		return runAgent()
+	case "ui":
+		if err := cfg.Save(); err != nil { // keep --server / --helium-folder / --name
+			return err
+		}
+		return runUI(noOpen)
 	case "autostart":
 		if !cfg.Connected() {
 			return app.ErrNotConnected
 		}
 		on := len(pos) == 0 || pos[0] != "off"
+		if on {
+			cfg.SetupDone = true // turning on automatic sync is the approval
+			if err := cfg.Save(); err != nil {
+				return err
+			}
+		}
 		if err := agent.SetAutostart(on); err != nil {
 			return err
 		}
@@ -286,6 +302,33 @@ func run(cmd string, pos []string, folder, name, server string, dry, restore boo
 		return fmt.Errorf("unknown command %q (see 'helium-syncer help')", cmd)
 	}
 	return cfg.Save()
+}
+
+var noOpen bool
+
+func runUI(noOpen bool) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	s := &ui.Server{}
+	if cfg, err := app.Load(); err == nil && cfg.Connected() {
+		if lock, err := agent.Lock(); err == nil {
+			defer lock.Close()
+			if a, err := agent.New(); err == nil {
+				s.Agent = a
+				go a.Run(ctx)
+			}
+		}
+	}
+	url, err := s.Start()
+	if err != nil {
+		return err
+	}
+	fmt.Println("Helium Syncer is open at", url)
+	if !noOpen {
+		agent.OpenBrowser(url)
+	}
+	<-ctx.Done()
+	return nil
 }
 
 func runAgent() error {

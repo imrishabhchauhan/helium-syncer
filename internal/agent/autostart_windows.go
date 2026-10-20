@@ -101,3 +101,8 @@ func LaunchHelium() error {
 	}
 	return exec.Command(exe).Start()
 }
+
+// OpenBrowser opens a URL in the default browser.
+func OpenBrowser(url string) error {
+	return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+}
