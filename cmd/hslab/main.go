@@ -19,6 +19,9 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/prefhash"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/opt"
+	"github.com/syndtr/goleveldb/leveldb/util"
 	_ "modernc.org/sqlite"
 )
 
@@ -41,6 +44,12 @@ func main() {
 		err = evalIn(port, os.Args[3], os.Args[4])
 	case "schema":
 		err = schema(os.Args[2])
+	case "ldb": // ldb <leveldb-dir> [key-prefix]: list keys of a copy
+		prefix := ""
+		if len(os.Args) > 3 {
+			prefix = os.Args[3]
+		}
+		err = ldbKeys(os.Args[2], prefix)
 	case "roundtrip":
 		err = roundtrip(os.Args[2])
 	case "close":
@@ -194,6 +203,46 @@ func schema(file string) error {
 		fmt.Printf("\n-- %s %s\n%s\n", typ, name, stmt)
 	}
 	return rows.Err()
+}
+
+// ldbKeys lists keys (and value sizes) of a LevelDB, reading a temporary
+// copy so the original is never opened or locked.
+func ldbKeys(dir, prefix string) error {
+	tmp, err := os.MkdirTemp("", "hslab-ldb-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || e.Name() == "LOCK" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(tmp, e.Name()), data, 0o600); err != nil {
+			return err
+		}
+	}
+	db, err := leveldb.OpenFile(tmp, &opt.Options{ReadOnly: true})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	it := db.NewIterator(util.BytesPrefix([]byte(prefix)), nil)
+	defer it.Release()
+	n := 0
+	for it.Next() {
+		fmt.Printf("%q (%d bytes)\n", it.Key(), len(it.Value()))
+		n++
+	}
+	fmt.Println(n, "keys")
+	return it.Error()
 }
 
 // roundtrip checks that our serialiser reproduces a Chromium-written JSON

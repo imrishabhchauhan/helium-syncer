@@ -83,10 +83,18 @@ Open: confirm the same on macOS (device id = IOPlatformUUID) with a throwaway pr
 - A test instance uses the user's real Downloads folder by default: a CRX landed there once (moved back into the test folder). `testkit.SeedDownloadDir` now gives every new test profile its own download folder.
 - `Browser.setDownloadBehavior` over DevTools makes Helium refuse extension downloads; don't use it.
 
-## Still to do in phase 0
+## Saved tab groups (`Sync Data/LevelDB`)
 
-- Saved tab groups (`Sync Data/LevelDB`, protobuf).
-- Repeat extensions on macOS (cross-OS path separator).
+- Helium **saves every tab group automatically**: each open group and each of its tabs gets a record keyed `saved_tab_group-dt-<guid>`; the session's `SetTabGroupMetadata2` carries the group's saved guid.
+- After restoring a group that only existed in our session file, Helium created its saved records itself → open groups need only the session file.
+- Record value (protobuf): `1` = version; `2` = synced specifics {`1` guid, `2` creation time, `3` update time (WebKit µs), `4` group {`1` position, `2` title, `3` colour = session colour + 1, `4` ?}, or `5` tab {`1` group guid, `2` position, `3` URL, `4` title}, `7` version}; `3` = device-local data (last interaction time etc., never synced).
+- Tab titles are present here (unlike Session files) → a second title source.
+- Writing closed saved groups (groups the user saved and closed) is the remaining piece: copy field 2 per guid, newest `update time` wins. Needs a UI check (saved-groups menu) because there is no extension API that lists saved groups.
+
+## Still to do
+
+- Closed saved groups write path + UI check (phase 1).
+- Repeat the extension test on macOS (cross-OS path separator).
 
 ## Tooling notes
 
