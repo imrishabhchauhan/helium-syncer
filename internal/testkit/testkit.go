@@ -5,6 +5,7 @@ package testkit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -39,7 +40,7 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 	if err := guard(o.UserDataDir); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(o.UserDataDir, 0o755); err != nil {
+	if err := SeedDownloadDir(o.UserDataDir, o.ProfileDir); err != nil {
 		return nil, err
 	}
 	args := []string{
@@ -145,6 +146,34 @@ func waitUnlocked(ud string, d time.Duration) error {
 		time.Sleep(250 * time.Millisecond)
 	}
 	return fmt.Errorf("testkit: %s still locked", ud)
+}
+
+// SeedDownloadDir gives a brand-new test profile its own download folder
+// inside the test user data dir, so a test can never save files into the
+// user's real Downloads folder. Existing profiles are left as they are.
+func SeedDownloadDir(ud, profileDir string) error {
+	if err := guard(ud); err != nil {
+		return err
+	}
+	if profileDir == "" {
+		profileDir = "Default"
+	}
+	pdir := filepath.Join(ud, profileDir)
+	prefs := filepath.Join(pdir, "Preferences")
+	if _, err := os.Stat(prefs); err == nil {
+		return nil
+	}
+	dl := filepath.Join(ud, "_downloads")
+	if err := os.MkdirAll(dl, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		return err
+	}
+	body, _ := json.Marshal(map[string]any{"download": map[string]any{
+		"default_directory": dl, "prompt_for_download": false, "directory_upgrade": true,
+	}, "savefile": map[string]any{"default_directory": dl}})
+	return os.WriteFile(prefs, body, 0o600)
 }
 
 func guard(ud string) error {

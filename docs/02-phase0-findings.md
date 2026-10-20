@@ -64,11 +64,29 @@ Open: confirm the same on macOS (device id = IOPlatformUUID) with a throwaway pr
 - Adding a profile = new `Profile N` folder with a small `Preferences` (`profile.name`, avatar) + an entry in `Local State` → `profile.info_cache` and `profile.profiles_order`.
 - Test: with "Your Helium" (Default) present, adding "Personal" and "Work 💼" gives three profiles; Helium opens both new ones and keeps their names; Default's files are untouched.
 
+## Extensions (`internal/extensions`)
+
+- A Web Store install is `location: 1`, `from_webstore: true`; files in `Extensions/<id>/<version>_0`; registration in `Secure Preferences` → `extensions.settings.<id>` (split protected pref, per-id MAC); data in `Local Extension Settings/<id>` (chrome.storage.local), `Sync Extension Settings/<id>` (chrome.storage.sync), and IndexedDB folders.
+- `path` uses the OS separator (`id\4.9.133_0` on Windows) — convert when moving between OSes.
+- Transfer = copy files + data folders (skip LevelDB `LOCK`), copy the registration without the source's service-worker state, re-sign for the target device, drop encrypted hashes.
+- Test (Dark Reader 4.9.133, installed through Helium's own Web Store flow): arrives enabled, `chrome.storage.local` (Hindi/emoji value) and `chrome.storage.sync` carried over, still enabled after background verification + a second restart.
+- Built-in uBlock Origin (`location: 5`) and other component extensions are never moved.
+
+### Helium services gate Web Store installs
+
+- Web Store downloads only work when `helium.services.user_consented = true` (set by Helium's first-run "setup" screen; also `helium.completed_onboarding`, `helium.services.enabled`, `helium.services.ext_proxy`). Otherwise Helium shows "Extension downloads are disabled".
+- The owner's Windows profile has never stored this consent, so Web Store installs (and extension updates through Helium's proxy) are likely off there. Helium Syncer must not flip a privacy consent silently: the setup screen should explain it and let the user turn it on in Helium.
+- Test fixture `test-profiles/ext-src` is created by seeding the consent in a throwaway profile, opening the store page, clicking "Add to Helium", and confirming the native dialog.
+
+### Test-kit safety lessons
+
+- A test instance uses the user's real Downloads folder by default: a CRX landed there once (moved back into the test folder). `testkit.SeedDownloadDir` now gives every new test profile its own download folder.
+- `Browser.setDownloadBehavior` over DevTools makes Helium refuse extension downloads; don't use it.
+
 ## Still to do in phase 0
 
 - Saved tab groups (`Sync Data/LevelDB`, protobuf).
-- Extensions: copy `Extensions/<id>/<version>`, register in `extensions.settings`, re-sign; extension data (`Local Extension Settings`, `IndexedDB`). Needs a real Web Store extension in a test profile.
-- Repeat the whole suite on macOS (device id = IOPlatformUUID, LF files, `Cookies` path).
+- Repeat extensions on macOS (cross-OS path separator).
 
 ## Tooling notes
 

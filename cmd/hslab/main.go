@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,12 @@ func main() {
 		err = macs(os.Args[2])
 	case "resign":
 		err = resign(os.Args[2], os.Args[3:])
+	case "open":
+		port, _ := strconv.Atoi(os.Args[2])
+		err = openURL(port, os.Args[3])
+	case "eval": // eval <port> <url-substring> <js>
+		port, _ := strconv.Atoi(os.Args[2])
+		err = evalIn(port, os.Args[3], os.Args[4])
 	case "schema":
 		err = schema(os.Args[2])
 	case "roundtrip":
@@ -230,6 +237,54 @@ func walk(node map[string]any, prefix string, fn func(path, mac string)) {
 			walk(t, p, fn)
 		}
 	}
+}
+
+// evalIn evaluates JavaScript in the first target whose URL contains sub.
+func evalIn(port int, sub, js string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	ts, err := cdp.Targets(ctx, port)
+	if err != nil {
+		return err
+	}
+	for _, t := range ts {
+		if strings.Contains(t.URL, sub) {
+			c, err := cdp.Dial(ctx, t.WSURL)
+			if err != nil {
+				return err
+			}
+			defer c.Close()
+			var out any
+			if err := c.Eval(ctx, js, &out); err != nil {
+				return err
+			}
+			b, _ := json.Marshal(out)
+			fmt.Println(string(b))
+			return nil
+		}
+	}
+	return fmt.Errorf("no target with URL containing %q", sub)
+}
+
+// openURL opens a new tab in a test instance via Target.createTarget.
+func openURL(port int, url string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ws, err := cdp.BrowserWSURL(ctx, port)
+	if err != nil {
+		return err
+	}
+	c, err := cdp.Dial(ctx, ws)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	// No Browser.setDownloadBehavior here: it makes Helium refuse extension
+	// downloads. Test profiles get their own download folder instead
+	// (testkit.SeedDownloadDir).
+	res, err := c.Call(ctx, "Target.createTarget", map[string]any{"url": url})
+	fmt.Println(string(res))
+	return err
 }
 
 // closeBrowser asks a test instance to shut down cleanly (so it writes its
