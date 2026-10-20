@@ -91,6 +91,12 @@ Open: confirm the same on macOS (device id = IOPlatformUUID) with a throwaway pr
 - Tab titles are present here (unlike Session files) → a second title source.
 - Writing closed saved groups (groups the user saved and closed) is the remaining piece: copy field 2 per guid, newest `update time` wins. Needs a UI check (saved-groups menu) because there is no extension API that lists saved groups.
 
+### ⚠️ Saved-group guids: never invent one
+
+- Writing a group whose `SetTabGroupMetadata2` carries a saved guid that the profile's saved-group database does not know makes Helium treat the group as **deleted on another device and close its tabs** (verified: nothing restored but a new tab).
+- Writing the group **without** a saved guid: Helium restores it and assigns a saved guid that then stays stable across restarts (`TestGroupWithoutSavedGUIDGetsStableGUID`).
+- Rule: the tab writer only ever reuses saved guids already present locally; each device maps synced group ids ↔ its own saved guids, learned after Helium assigns them.
+
 ## Still to do
 
 - Closed saved groups write path + UI check (phase 1).
