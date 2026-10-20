@@ -1,14 +1,13 @@
 -- Helium Syncer server schema (Cloudflare D1).
--- The server stores only ciphertext for synced data. It knows account
--- emails (for sign-in codes), device names and Helium versions.
+-- There are no emails or passwords. An account is identified by an id
+-- derived from its sync code; the server stores only the SHA-256 of the
+-- auth secret derived from the same code, plus ciphertext.
 
 CREATE TABLE IF NOT EXISTS accounts (
-  id          TEXT PRIMARY KEY,
-  email       TEXT NOT NULL UNIQUE,      -- lower-case
+  id          TEXT PRIMARY KEY,           -- hex, derived from the sync code
+  verifier    TEXT NOT NULL,              -- sha256(auth secret), hex
   created_at  INTEGER NOT NULL,
-  storage     INTEGER NOT NULL DEFAULT 0, -- bytes stored (envelopes + blobs)
-  recovery_blob     TEXT,                 -- account key wrapped by the recovery key (base64)
-  recovery_verifier TEXT                  -- sha256 of the recovery auth secret (hex)
+  storage     INTEGER NOT NULL DEFAULT 0  -- bytes stored (envelopes + blobs)
 );
 
 CREATE TABLE IF NOT EXISTS devices (
@@ -16,25 +15,15 @@ CREATE TABLE IF NOT EXISTS devices (
   account_id  TEXT NOT NULL REFERENCES accounts(id),
   name        TEXT NOT NULL,
   platform    TEXT NOT NULL,              -- windows | macos | linux
-  public_key  TEXT NOT NULL,              -- X25519, base64
   token_hash  TEXT NOT NULL UNIQUE,       -- sha256 of the device token (hex)
-  status      TEXT NOT NULL,              -- approved | pending | removed
-  sealed_key  TEXT,                       -- account key sealed to public_key (base64)
+  status      TEXT NOT NULL,              -- active | removed
   helium_version TEXT,
   created_at  INTEGER NOT NULL,
   last_seen   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS devices_account ON devices(account_id);
 
-CREATE TABLE IF NOT EXISTS auth_codes (
-  email       TEXT PRIMARY KEY,
-  salt        TEXT NOT NULL,
-  code_hash   TEXT NOT NULL,              -- sha256(salt || code)
-  expires_at  INTEGER NOT NULL,
-  attempts    INTEGER NOT NULL DEFAULT 0
-);
-
--- Sliding-window counters for rate limits (key = kind:subject:window).
+-- Fixed-window counters for rate limits (key = kind:subject:window).
 CREATE TABLE IF NOT EXISTS rate (
   key     TEXT PRIMARY KEY,
   count   INTEGER NOT NULL,

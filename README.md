@@ -26,7 +26,7 @@ Once the official Helium team releases sync support ([imputnet/helium#90](https:
 
 ## The goal: easier, faster, more reliable
 
-- **Easy:** install, type your email code, done. No servers, keys, git or config files to deal with. Your second device sets itself up: profiles, extensions, tabs and all.
+- **Easy:** install on the first device and save its sync code; on every other device, paste the code. No account, email or password. No servers, git or config files to deal with. Your second device sets itself up: profiles, extensions, tabs and all.
 - **Fast:** changes upload a few seconds after you quit Helium, and the other device applies them in the background, so Helium opens already up to date.
 - **Reliable:** a backup before every change, item-by-item merging (nothing gets blindly overwritten), and a hard stop instead of a guess if a Helium update changes a file format.
 
@@ -55,14 +55,15 @@ On macOS, "quit" means **Cmd+Q**, not just closing the window.
 ## Privacy
 
 - **End-to-end encrypted.** Data is encrypted on your device before upload. The server only stores scrambled data it can't read.
-- **Sign in with an email code.** New devices are approved from a device you already have. A recovery key covers the case where no old device is left.
+- **No account, just a sync code.** Your first device creates a code like `K7QM-2XPA-9RTD-…`; your other devices join by entering it. The code is the key: the server never sees it, so nobody (including us) can read or reset your data. Keep it safe, e.g. in a password manager. Anyone with the code can join your sync.
+- **No email, no password, no tracking.** The server only knows device names (you pick them), Helium versions and the size of your encrypted data.
 - **Self-host option.** Run the Cloudflare server on your own account if you prefer.
 - **Free and open source** under the MIT license.
 
 ## Roadmap
 
-- [ ] **Phase 0:** read and write every Helium data type safely on test profiles (Windows + macOS)
-- [ ] **Phase 1:** accounts, encryption, profiles, bookmarks, history, tabs, pinned tabs, tab groups, settings
+- [x] **Phase 0:** read and write every Helium data type safely on test profiles (Windows + macOS)
+- [ ] **Phase 1:** sync code + encryption, server, profiles, bookmarks, history, tabs, pinned tabs, tab groups, settings (engine and server done; app in progress)
 - [ ] **Phase 2:** extensions and extension data
 - [ ] **Phase 3:** opt-in logins per site
 - [ ] **Phase 4:** signed installers, auto-update, self-host guide

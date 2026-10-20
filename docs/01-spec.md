@@ -5,7 +5,7 @@ Not affiliated with imput. Retire gracefully if Helium ships native sync ([imput
 
 ## 0. Design goals — for ANYONE with a Mac + Windows PC
 
-- **10x easier:** one installer per OS, email code, done. No git, keys, servers or config files. The second device sets itself up (profiles, extensions, tabs). Plain-language status in the tray/menu bar ("Up to date · 2 min ago").
+- **10x easier:** one installer per OS, one sync code, done (no account, email or password). No git, keys, servers or config files. The second device sets itself up (profiles, extensions, tabs). Plain-language status in the tray/menu bar ("Up to date · 2 min ago").
 - **10x faster:** upload within seconds of quitting Helium; downloads applied in the background while Helium is closed, so opening Helium never waits on the network. Only changes travel, not whole files.
 - **10x more reliable:** backup before every apply, item-level merges with tombstones, atomic writes, schema guards that pause instead of guessing, and an end-to-end test suite on real Helium on both OSes.
 
@@ -83,9 +83,9 @@ The owner's Mac Helium is fully set up with real logins. Until a phase passes ev
 - macOS: "quit" = Cmd+Q (app process exits), not closing the last window.
 
 First setup:
-- Device 1 (already set up): install → email code → "Create sync" → uploads everything.
-- Device 2: install → same email code → approve from device 1 (one click) → local profile backed up → **merged**, never erased. Missing profiles are created automatically.
-- A printable/1Password-friendly **recovery key** for when no old device is available. Without old device AND recovery key, data can't be decrypted (by design — the server can't read it).
+- Device 1 (already set up): install → "Start a new sync" → Helium Syncer shows the **sync code** (e.g. `K7QM-2XPA-9RTD-…`) to save in a password manager → uploads everything.
+- Device 2: install → "Join a sync" → paste the code → local profile backed up → other devices' profiles **added**, never merged or erased.
+- The sync code is the only secret: it derives the account id, the join secret (server keeps only its hash) and the encryption key. Lost code + no device left = data can't be decrypted (by design). Anyone with the code can join, so it is shown once with a "save it in your password manager" step; "change sync code" is planned.
 
 ## 3. What syncs and how it merges
 
@@ -116,8 +116,8 @@ First setup:
 ## 5. Architecture
 
 - **Helper app** (Windows + macOS): Go, single binary, no CGO (`modernc.org/sqlite`, `syndtr/goleveldb`). UI via Wails (tray/menu bar + onboarding). Background agent at login (Windows Task Scheduler / macOS LaunchAgent). Launcher shortcut for the "last check on open".
-- **Server** (Cloudflare, owner-hosted, self-host optional): Worker (TypeScript) + Durable Object per account (ordering, live notify) + D1 (accounts, devices, change index) + R2 (encrypted blobs, snapshots). Email codes via Cloudflare Email Service.
-- **Encryption**: random account key; XChaCha20-Poly1305 for all payloads; device keys X25519; new device gets the account key sealed by an existing device; recovery key as fallback. Server sees only ciphertext + sizes.
+- **Server** (Cloudflare, owner-hosted at https://helium.aiwithrishabh.com, self-host optional): Worker (TypeScript) + D1 (accounts by derived id, devices, ordered encrypted envelopes) + R2 (encrypted blobs). No email, no passwords. Join attempts rate-limited per IP.
+- **Encryption**: key derived from the 160-bit sync code (HKDF-SHA256); XChaCha20-Poly1305 for all payloads, bound to the account id. Server sees only ciphertext + sizes.
 - **Free-tier guard**: per-account storage caps, history compaction, snapshot + delta log with periodic compaction.
 
 ## 6. Testing ("hyper testing")

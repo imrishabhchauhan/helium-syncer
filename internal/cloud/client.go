@@ -29,9 +29,9 @@ const DefaultServer = "https://helium.aiwithrishabh.com"
 // Client talks to one server as one device.
 type Client struct {
 	Base      string
-	Token     string // device token from Verify
+	Token     string // device token from Join
 	AccountID string
-	Key       []byte // account key (nil until the device is approved)
+	Key       []byte // encryption key derived from the sync code
 	HTTP      *http.Client
 }
 
@@ -43,12 +43,6 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string { return e.Message }
-
-// IsPending reports whether the device still waits for approval.
-func IsPending(err error) bool {
-	var ae *APIError
-	return errors.As(err, &ae) && ae.Code == "pending"
-}
 
 func (c *Client) http() *http.Client {
 	if c.HTTP != nil {
@@ -98,48 +92,46 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) (int,
 	return res.StatusCode, nil
 }
 
-// --- sign-in and devices ---
+// --- joining and devices ---
 
-// StartSignIn asks the server to email a 6-digit code.
-func (c *Client) StartSignIn(ctx context.Context, email string) error {
-	_, err := c.do(ctx, "POST", "/v1/auth/start", map[string]string{"email": email}, nil)
-	return err
+// JoinResult is the answer to Join.
+type JoinResult struct {
+	DeviceID string `json:"device_id"`
+	Token    string `json:"token"`
+	Created  bool   `json:"created"` // true when this call started a new sync
 }
 
-// VerifyResult is the answer to Verify.
-type VerifyResult struct {
-	AccountID  string `json:"account_id"`
-	DeviceID   string `json:"device_id"`
-	Token      string `json:"token"`
-	Status     string `json:"status"` // approved | pending
-	NewAccount bool   `json:"new_account"`
-}
-
-// Verify exchanges the emailed code for a device token.
-func (c *Client) Verify(ctx context.Context, email, code, deviceName, platform, publicKey string) (VerifyResult, error) {
-	var r VerifyResult
-	_, err := c.do(ctx, "POST", "/v1/auth/verify", map[string]any{
-		"email": email, "code": code,
-		"device": map[string]string{"name": deviceName, "platform": platform, "public_key": publicKey},
-	}, &r)
-	if err == nil {
-		c.Token, c.AccountID = r.Token, r.AccountID
+// Join connects this device to the sync identified by code. With create
+// set, a sync that does not exist yet is started (first device); without
+// it, an unknown code is an error ("no_sync"), so a typo never silently
+// starts an empty second sync.
+func (c *Client) Join(ctx context.Context, code, deviceName, platform string, create bool) (JoinResult, error) {
+	s, err := vault.Derive(code)
+	if err != nil {
+		return JoinResult{}, err
 	}
-	return r, err
+	var r JoinResult
+	_, err = c.do(ctx, "POST", "/v1/join", map[string]any{
+		"account_id": s.AccountID, "auth": s.Auth, "create": create,
+		"device": map[string]string{"name": deviceName, "platform": platform},
+	}, &r)
+	if err != nil {
+		return r, err
+	}
+	c.Token, c.AccountID, c.Key = r.Token, s.AccountID, s.Key
+	return r, nil
 }
 
-// Device is one device of the account.
+// Device is one device in the sync.
 type Device struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
 	Platform      string `json:"platform"`
-	PublicKey     string `json:"public_key"`
-	Status        string `json:"status"`
 	HeliumVersion string `json:"helium_version"`
 	LastSeen      int64  `json:"last_seen"`
 }
 
-// Devices lists the account's devices and returns this device's id.
+// Devices lists the sync's devices and returns this device's id.
 func (c *Client) Devices(ctx context.Context) ([]Device, string, error) {
 	var r struct {
 		Me      string   `json:"me"`
@@ -149,88 +141,10 @@ func (c *Client) Devices(ctx context.Context) ([]Device, string, error) {
 	return r.Devices, r.Me, err
 }
 
-// Approve lets a waiting device in by sealing the account key to it.
-func (c *Client) Approve(ctx context.Context, d Device) error {
-	if c.Key == nil {
-		return errors.New("this device has no account key yet")
-	}
-	sealed, err := vault.SealTo(d.PublicKey, c.Key)
-	if err != nil {
-		return err
-	}
-	_, err = c.do(ctx, "POST", "/v1/devices/"+d.ID+"/approve", map[string]string{"sealed_key": sealed}, nil)
-	return err
-}
-
-// Remove signs another device out.
+// Remove disconnects a device (it must enter the sync code to come back).
 func (c *Client) Remove(ctx context.Context, deviceID string) error {
 	_, err := c.do(ctx, "POST", "/v1/devices/"+deviceID+"/remove", nil, nil)
 	return err
-}
-
-// FetchKey gets this device's sealed account key once it is approved and
-// opens it. It returns (nil, nil) while the device still waits.
-func (c *Client) FetchKey(ctx context.Context, dk *vault.DeviceKey) ([]byte, error) {
-	var r struct {
-		Status    string `json:"status"`
-		SealedKey string `json:"sealed_key"`
-	}
-	if _, err := c.do(ctx, "GET", "/v1/keys/mine", nil, &r); err != nil {
-		return nil, err
-	}
-	if r.SealedKey == "" {
-		return nil, nil
-	}
-	k, err := dk.OpenSealed(r.SealedKey)
-	if err != nil {
-		return nil, err
-	}
-	c.Key = k
-	return k, nil
-}
-
-// StoreOwnKey keeps a sealed copy of the account key for this device.
-func (c *Client) StoreOwnKey(ctx context.Context, dk *vault.DeviceKey) error {
-	sealed, err := vault.SealTo(dk.Public(), c.Key)
-	if err != nil {
-		return err
-	}
-	_, err = c.do(ctx, "PUT", "/v1/keys/mine", map[string]string{"sealed_key": sealed}, nil)
-	return err
-}
-
-// SetRecovery stores the account key wrapped by a recovery key.
-func (c *Client) SetRecovery(ctx context.Context, recoveryKey string) error {
-	wrap, _, verifier, err := vault.RecoverySecrets(recoveryKey, c.AccountID)
-	if err != nil {
-		return err
-	}
-	blob, err := vault.WrapAccountKey(wrap, c.Key, c.AccountID)
-	if err != nil {
-		return err
-	}
-	_, err = c.do(ctx, "PUT", "/v1/recovery", map[string]string{"blob": blob, "verifier": verifier}, nil)
-	return err
-}
-
-// Recover approves this waiting device with the recovery key.
-func (c *Client) Recover(ctx context.Context, recoveryKey string) ([]byte, error) {
-	wrap, secret, _, err := vault.RecoverySecrets(recoveryKey, c.AccountID)
-	if err != nil {
-		return nil, err
-	}
-	var r struct {
-		Blob string `json:"blob"`
-	}
-	if _, err := c.do(ctx, "POST", "/v1/recovery/claim", map[string]string{"secret": secret}, &r); err != nil {
-		return nil, err
-	}
-	k, err := vault.UnwrapAccountKey(wrap, r.Blob, c.AccountID)
-	if err != nil {
-		return nil, err
-	}
-	c.Key = k
-	return k, nil
 }
 
 // --- engine.Transport ---
@@ -258,7 +172,7 @@ func (c *Client) seal(ops []crdt.Op) (map[string]string, error) {
 // Push sends ops as encrypted envelopes.
 func (c *Client) Push(ctx context.Context, ops []crdt.Op) error {
 	if c.Key == nil {
-		return errors.New("this device is not approved yet")
+		return errors.New("this device is not connected to a sync yet")
 	}
 	var items []map[string]string
 	var batch []crdt.Op
@@ -307,7 +221,7 @@ func (c *Client) Push(ctx context.Context, ops []crdt.Op) error {
 // Pull returns every op after cursor, decrypted.
 func (c *Client) Pull(ctx context.Context, cursor string) ([]crdt.Op, string, error) {
 	if c.Key == nil {
-		return nil, cursor, errors.New("this device is not approved yet")
+		return nil, cursor, errors.New("this device is not connected to a sync yet")
 	}
 	after, _ := strconv.ParseInt(cursor, 10, 64)
 	var all []crdt.Op
@@ -352,7 +266,7 @@ func (c *Client) Pull(ctx context.Context, cursor string) ([]crdt.Op, string, er
 	return all, strconv.FormatInt(after, 10), nil
 }
 
-// Versions reports the Helium version of every other approved device.
+// Versions reports the Helium version of every other device in the sync.
 func (c *Client) Versions(ctx context.Context, exceptDevice string) (map[string]string, error) {
 	devs, me, err := c.Devices(ctx)
 	if err != nil {
@@ -360,7 +274,7 @@ func (c *Client) Versions(ctx context.Context, exceptDevice string) (map[string]
 	}
 	out := map[string]string{}
 	for _, d := range devs {
-		if d.ID == me || d.Status != "approved" || d.HeliumVersion == "" {
+		if d.ID == me || d.HeliumVersion == "" {
 			continue
 		}
 		out[d.Name] = d.HeliumVersion

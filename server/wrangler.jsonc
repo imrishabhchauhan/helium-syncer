@@ -1,5 +1,5 @@
 // Helium Syncer server. To self-host: create your own D1 database and R2
-// bucket, put their ids/names here, set MAIL_FROM, then `npx wrangler deploy`.
+// bucket, put their id/name here, apply schema.sql, then `npx wrangler deploy`.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "helium-syncer-api",
@@ -9,14 +9,12 @@
   "routes": [{ "pattern": "helium.aiwithrishabh.com", "custom_domain": true }],
   "d1_databases": [{ "binding": "DB", "database_name": "helium-syncer", "database_id": "1a5567ff-6569-4439-aa24-a7eeb7e0a529" }],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-blobs" }],
-  "vars": { "MAIL_MODE": "resend", "MAIL_FROM": "no-reply@aiwithrishabh.com" },
   "env": {
-    // Local tests: `npx wrangler dev --env dev` never sends real email.
+    // Local tests: `npx wrangler dev --env dev --local`.
     "dev": {
       "routes": [],
       "d1_databases": [{ "binding": "DB", "database_name": "helium-syncer-dev", "database_id": "local-dev" }],
-      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-dev" }],
-      "vars": { "MAIL_MODE": "log", "MAIL_FROM": "no-reply@example.invalid" }
+      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-dev" }]
     }
   }
 }

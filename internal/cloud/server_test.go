@@ -1,8 +1,8 @@
 //go:build server
 
 // Integration test against the real Worker code running locally in
-// Cloudflare's runtime (wrangler dev, local D1 + R2, MAIL_MODE=log so no
-// email is ever sent). Run: go test -tags server ./internal/cloud/
+// Cloudflare's runtime (wrangler dev with local D1 + R2).
+// Run: go test -tags server ./internal/cloud/
 package cloud
 
 import (
@@ -17,7 +17,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -27,28 +26,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
 )
 
-type devServer struct {
-	base  string
-	mu    sync.Mutex
-	codes map[string]string // email -> latest code from the dev mail log
-}
-
-func (s *devServer) code(t *testing.T, email string) string {
-	for i := 0; i < 100; i++ {
-		s.mu.Lock()
-		c := s.codes[email]
-		delete(s.codes, email)
-		s.mu.Unlock()
-		if c != "" {
-			return c
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	t.Fatalf("no code logged for %s", email)
-	return ""
-}
-
-func startServer(t *testing.T) *devServer {
+func startServer(t *testing.T) string {
 	root, _ := filepath.Abs("../../server")
 	wrangler := filepath.Join(root, "node_modules", "wrangler", "bin", "wrangler.js")
 	if _, err := os.Stat(wrangler); err != nil {
@@ -74,29 +52,22 @@ func startServer(t *testing.T) *devServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
-	s := &devServer{base: fmt.Sprintf("http://127.0.0.1:%d", port), codes: map[string]string{}}
-	re := regexp.MustCompile(`\[dev mail\] to=(\S+) code=(\d{6})`)
 	var logMu sync.Mutex
 	var logBuf bytes.Buffer
 	go func() {
 		sc := bufio.NewScanner(pr)
 		for sc.Scan() {
-			line := sc.Text()
 			logMu.Lock()
-			logBuf.WriteString(line + "\n")
+			logBuf.WriteString(sc.Text() + "\n")
 			logMu.Unlock()
-			if m := re.FindStringSubmatch(line); m != nil {
-				s.mu.Lock()
-				s.codes[m[1]] = m[2]
-				s.mu.Unlock()
-			}
 		}
 	}()
+	base := fmt.Sprintf("http://127.0.0.1:%d", port)
 	for i := 0; i < 200; i++ {
-		if res, err := http.Get(s.base + "/v1/health"); err == nil {
+		if res, err := http.Get(base + "/v1/health"); err == nil {
 			res.Body.Close()
 			if res.StatusCode == 200 {
-				return s
+				return base
 			}
 		}
 		time.Sleep(150 * time.Millisecond)
@@ -104,27 +75,7 @@ func startServer(t *testing.T) *devServer {
 	logMu.Lock()
 	defer logMu.Unlock()
 	t.Fatalf("server did not start:\n%s", logBuf.String())
-	return nil
-}
-
-type dev struct {
-	c  *Client
-	dk *vault.DeviceKey
-	r  VerifyResult
-}
-
-func signIn(t *testing.T, ctx context.Context, s *devServer, email, name string) *dev {
-	t.Helper()
-	dk, _ := vault.NewDeviceKey()
-	c := &Client{Base: s.base}
-	if err := c.StartSignIn(ctx, email); err != nil {
-		t.Fatal(err)
-	}
-	r, err := c.Verify(ctx, email, s.code(t, email), name, "windows", dk.Public())
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &dev{c, dk, r}
+	return ""
 }
 
 func apiCode(err error) string {
@@ -135,49 +86,45 @@ func apiCode(err error) string {
 	return ""
 }
 
+func newCode(t *testing.T) string {
+	c, err := vault.NewSyncCode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
 func TestServerEndToEnd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	s := startServer(t)
-	email := "owner@example.com"
+	base := startServer(t)
+	code := newCode(t)
 
-	// 1. First device creates the account and the account key.
-	mac := signIn(t, ctx, s, email, "MacBook Air")
-	if mac.r.Status != "approved" || !mac.r.NewAccount {
-		t.Fatalf("first device should be approved for a new account: %+v", mac.r)
+	// 1. The first device starts the sync; the second joins with the code.
+	mac := &Client{Base: base}
+	r, err := mac.Join(ctx, code, "MacBook Air", "macos", true)
+	if err != nil || !r.Created {
+		t.Fatalf("first device should start the sync: %+v %v", r, err)
 	}
-	mac.c.Key, _ = vault.NewAccountKey()
-	if err := mac.c.StoreOwnKey(ctx, mac.dk); err != nil {
-		t.Fatal(err)
+	win := &Client{Base: base}
+	typed := strings.ToLower(strings.ReplaceAll(code, "-", " ")) // as a person might type it
+	if r, err := win.Join(ctx, typed, "Windows PC", "windows", false); err != nil || r.Created {
+		t.Fatalf("second device should join the existing sync: %+v %v", r, err)
 	}
-	recovery, _ := vault.NewRecoveryKey()
-	if err := mac.c.SetRecovery(ctx, recovery); err != nil {
-		t.Fatal(err)
+	if !bytes.Equal(win.Key, mac.Key) || win.AccountID != mac.AccountID {
+		t.Fatal("both devices must derive the same account and key")
 	}
 
-	// 2. Second device waits for approval and can read nothing until then.
-	win := signIn(t, ctx, s, email, "Windows PC")
-	if win.r.Status != "pending" {
-		t.Fatalf("second device must wait for approval: %+v", win.r)
+	// 2. A mistyped (other valid) code must not silently start an empty sync.
+	if _, err := (&Client{Base: base}).Join(ctx, newCode(t), "Laptop", "windows", false); apiCode(err) != "no_sync" {
+		t.Fatalf("an unknown code must be refused, got %v", err)
 	}
-	win.c.Key = make([]byte, 32) // even with a key, a pending device is refused
-	if _, _, err := win.c.Pull(ctx, "0"); apiCode(err) != "pending" {
-		t.Fatalf("a pending device must not read envelopes, got %v", err)
-	}
-	win.c.Key = nil
-	if k, err := win.c.FetchKey(ctx, win.dk); err != nil || k != nil {
-		t.Fatalf("no key before approval: %v %v", k, err)
-	}
-	devs, _, _ := mac.c.Devices(ctx)
-	for _, d := range devs {
-		if d.Status == "pending" {
-			if err := mac.c.Approve(ctx, d); err != nil {
-				t.Fatal(err)
-			}
-		}
-	}
-	if k, err := win.c.FetchKey(ctx, win.dk); err != nil || !bytes.Equal(k, mac.c.Key) {
-		t.Fatalf("approved device should receive the account key: %v", err)
+	// Someone who knows the account id but not the code is refused.
+	other, _ := vault.Derive(newCode(t))
+	_, err = mac.do(ctx, "POST", "/v1/join", map[string]any{"account_id": mac.AccountID, "auth": other.Auth, "create": false,
+		"device": map[string]string{"name": "x", "platform": "windows"}}, nil)
+	if apiCode(err) != "wrong_code" {
+		t.Fatalf("a wrong auth secret must be refused, got %v", err)
 	}
 
 	// 3. Ops travel encrypted between devices.
@@ -185,116 +132,99 @@ func TestServerEndToEnd(t *testing.T) {
 		{Type: "p1/bookmark", Key: "g1", Value: []byte(`{"n":"हिंदी 😀","u":"https://x.example/"}`), Stamp: crdt.Stamp{Wall: 1, Device: "mac"}},
 		{Type: "p1/tab", Key: "https://y.example/#0", Deleted: true, Stamp: crdt.Stamp{Wall: 2, Device: "mac"}},
 	}
-	if err := mac.c.Push(ctx, ops); err != nil {
+	if err := mac.Push(ctx, ops); err != nil {
 		t.Fatal(err)
 	}
-	got, cursor, err := win.c.Pull(ctx, "0")
+	got, cursor, err := win.Pull(ctx, "0")
 	if err != nil || len(got) != 2 || string(got[0].Value) != string(ops[0].Value) || !got[1].Deleted {
 		t.Fatalf("pull: %v %+v", err, got)
 	}
-	if again, _, _ := win.c.Pull(ctx, cursor); len(again) != 0 {
+	if again, _, _ := win.Pull(ctx, cursor); len(again) != 0 {
 		t.Fatalf("the cursor must skip what was already received, got %d", len(again))
 	}
-	// Big batch (initial history upload) splits into several envelopes.
+	// A big first upload (lots of history) splits into several envelopes.
 	var many []crdt.Op
 	for i := 0; i < 6000; i++ {
 		many = append(many, crdt.Op{Type: "p1/visit", Key: fmt.Sprintf("%d|https://site%d.example/page", 13400000000000000+i, i%300),
 			Value: []byte(`{"tr":805306368}`), Stamp: crdt.Stamp{Wall: int64(10 + i), Device: "mac"}})
 	}
-	if err := mac.c.Push(ctx, many); err != nil {
+	if err := mac.Push(ctx, many); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, err := win.c.Pull(ctx, cursor); err != nil || len(got) != len(many) {
+	if got, _, err := win.Pull(ctx, cursor); err != nil || len(got) != len(many) {
 		t.Fatalf("big push: got %d ops, err %v", len(got), err)
 	}
 
-	// 4. Blobs: encrypted, verified on download.
-	id, err := mac.c.PutBlob(ctx, []byte("extension package bytes"))
+	// 4. Blobs: encrypted, checked on download.
+	id, err := mac.PutBlob(ctx, []byte("extension package bytes"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b, err := win.c.GetBlob(ctx, id); err != nil || string(b) != "extension package bytes" {
+	if b, err := win.GetBlob(ctx, id); err != nil || string(b) != "extension package bytes" {
 		t.Fatalf("blob: %q %v", b, err)
 	}
 
 	// 5. Version gate data.
-	mac.c.Announce(ctx, "", "", "155.0.8059.84")
-	if v, _ := win.c.Versions(ctx, ""); v["MacBook Air"] != "155.0.8059.84" {
+	if err := mac.Announce(ctx, "", "", "155.0.8059.84"); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := win.Versions(ctx, ""); v["MacBook Air"] != "155.0.8059.84" {
 		t.Fatalf("versions: %v", v)
 	}
 
-	// 6. Recovery: a new device with only the recovery key.
-	laptop := signIn(t, ctx, s, email, "New laptop")
-	if laptop.r.Status != "pending" {
-		t.Fatal("new device must start pending")
-	}
-	if _, err := laptop.c.Recover(ctx, "AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH"); err == nil {
-		t.Fatal("a wrong recovery key must be refused")
-	}
-	if k, err := laptop.c.Recover(ctx, strings.ToLower(recovery)); err != nil || !bytes.Equal(k, mac.c.Key) {
-		t.Fatalf("recovery failed: %v", err)
-	}
-	if got, _, err := laptop.c.Pull(ctx, "0"); err != nil || len(got) != 2+len(many) {
-		t.Fatalf("recovered device should read everything: %d %v", len(got), err)
-	}
-
-	// 7. Removing a device cuts it off.
-	if err := mac.c.Remove(ctx, laptop.r.DeviceID); err != nil {
+	// 6. Removing a device cuts it off; it can come back with the code.
+	laptop := &Client{Base: base}
+	lr, err := laptop.Join(ctx, code, "Old laptop", "windows", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := laptop.c.Pull(ctx, "0"); apiCode(err) != "unauthorized" {
+	if err := mac.Remove(ctx, lr.DeviceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := laptop.Pull(ctx, "0"); apiCode(err) != "unauthorized" {
 		t.Fatalf("a removed device must be refused, got %v", err)
 	}
+	if _, err := laptop.Join(ctx, code, "Old laptop", "windows", false); err != nil {
+		t.Fatalf("entering the code again must reconnect: %v", err)
+	}
 
-	// 8. Another account cannot see this account's data.
-	stranger := signIn(t, ctx, s, "stranger@example.com", "Stranger")
-	stranger.c.Key, _ = vault.NewAccountKey()
-	if got, _, err := stranger.c.Pull(ctx, "0"); err != nil || len(got) != 0 {
-		t.Fatalf("another account must see nothing: %d %v", len(got), err)
+	// 7. Another sync cannot see this one.
+	stranger := &Client{Base: base}
+	if _, err := stranger.Join(ctx, newCode(t), "Stranger", "windows", true); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := stranger.c.GetBlob(ctx, id); err == nil {
-		t.Fatal("another account must not download this account's blob")
+	if got, _, err := stranger.Pull(ctx, "0"); err != nil || len(got) != 0 {
+		t.Fatalf("another sync must see nothing: %d %v", len(got), err)
 	}
-	// A device with the wrong key detects it instead of writing garbage.
-	wrong := &Client{Base: s.base, Token: win.c.Token, AccountID: win.c.AccountID}
-	wrong.Key, _ = vault.NewAccountKey()
+	if _, err := stranger.GetBlob(ctx, id); err == nil {
+		t.Fatal("another sync must not download this sync's blob")
+	}
+	// A device with the wrong key notices instead of writing garbage.
+	wrong := &Client{Base: base, Token: win.Token, AccountID: win.AccountID, Key: other.Key}
 	if _, _, err := wrong.Pull(ctx, "0"); !errors.Is(err, vault.ErrDecrypt) {
-		t.Fatalf("wrong key must fail to decrypt, got %v", err)
+		t.Fatalf("a wrong key must fail to decrypt, got %v", err)
 	}
 }
 
-func TestServerSignInAbuse(t *testing.T) {
+func TestServerJoinAbuse(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	s := startServer(t)
-	c := &Client{Base: s.base}
-	email := "victim@example.com"
-	if err := c.StartSignIn(ctx, email); err != nil {
-		t.Fatal(err)
+	base := startServer(t)
+	c := &Client{Base: base}
+	_, err := c.do(ctx, "POST", "/v1/join", map[string]any{"account_id": "zz", "auth": "zz", "create": true,
+		"device": map[string]string{"name": "x", "platform": "windows"}}, nil)
+	if apiCode(err) != "bad_code" {
+		t.Fatalf("malformed ids must be refused, got %v", err)
 	}
-	real := s.code(t, email)
-	wrong := "000000"
-	if real == wrong {
-		wrong = "111111"
+	// Guessing codes: after 30 attempts an hour from one address, refused.
+	var last error
+	for i := 0; i < 31; i++ {
+		_, last = (&Client{Base: base}).Join(ctx, newCode(t), "guesser", "windows", false)
 	}
-	dk, _ := vault.NewDeviceKey()
-	for i := 0; i < 5; i++ {
-		if _, err := c.Verify(ctx, email, wrong, "x", "windows", dk.Public()); apiCode(err) != "code_wrong" {
-			t.Fatalf("attempt %d: want code_wrong, got %v", i, err)
-		}
+	if apiCode(last) != "rate_limited" {
+		t.Fatalf("the 31st join attempt in an hour must be rate limited, got %v", last)
 	}
-	if _, err := c.Verify(ctx, email, real, "x", "windows", dk.Public()); apiCode(err) != "code_locked" {
-		t.Fatalf("after 5 wrong codes even the right code must be refused, got %v", err)
-	}
-	for i := 0; i < 4; i++ { // 1 earlier + 4 = 5 allowed per hour
-		if err := c.StartSignIn(ctx, email); err != nil {
-			t.Fatalf("code request %d: %v", i, err)
-		}
-	}
-	if err := c.StartSignIn(ctx, email); apiCode(err) != "rate_limited" {
-		t.Fatalf("the 6th code request in an hour must be rate limited, got %v", err)
-	}
-	if _, _, err := (&Client{Base: s.base, Token: "made-up"}).Devices(ctx); apiCode(err) != "unauthorized" {
+	if _, _, err := (&Client{Base: base, Token: "made-up"}).Devices(ctx); apiCode(err) != "unauthorized" {
 		t.Fatalf("a made-up token must be refused, got %v", err)
 	}
 }
