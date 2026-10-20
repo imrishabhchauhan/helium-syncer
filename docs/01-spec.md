@@ -22,6 +22,30 @@ Windows app is a system install at `C:\Program Files\imput\Helium\Application\ch
 3 extensions are listed in `Secure Preferences` with 0 `Extensions/` folders, so built-in component extensions must be told apart from user-installed ones.
 macOS path to confirm on the Mac (expected `~/Library/Application Support/net.imput.helium`) — run `scripts/check-mac.sh`.
 
+## 1b. Works on every setup (detect, never assume)
+
+Every user's machine is different: install location, per-user vs machine-wide, custom profile folders, Intel vs Apple Silicon, x64 vs ARM64, different OS and Helium versions. Rules:
+
+- **Find Helium by identity, not by path.**
+  - Windows: Uninstall registry entries (`HKLM`, `WOW6432Node`, `HKCU`) with `DisplayName = Helium` / `Publisher = The Helium Authors`, `StartMenuInternet\Helium`, running processes signed/described as Helium, Scoop/winget/portable folders. Never trust `App Paths\chrome.exe` (on the owner's PC it points to Helium even though Google Chrome is also installed).
+  - macOS: LaunchServices / Spotlight by bundle id `net.imput.helium` (any folder, any disk), plus `/Applications` and `~/Applications`.
+- **Find the profile folder the same way:** default location, plus any `--user-data-dir` from the running process, shortcuts or policies. Several user data folders on one machine are allowed; each is synced separately.
+- **Read the version from the data, not the app:** `Last Version` + `Local State` → pick the matching reader/writer; unknown version → pause that data type with a clear message.
+- **Platform differences are data, not code branches scattered around** — one table per OS:
+
+| Item | Windows | macOS |
+|---|---|---|
+| User data | `%LOCALAPPDATA%\imput\Helium\User Data` (default) | `~/Library/Application Support/net.imput.helium` (default) |
+| App | `Program Files\imput\Helium\Application\chrome.exe` (machine-wide) or `%LOCALAPPDATA%\…` (per-user) | `Helium.app`, bundle id `net.imput.helium` |
+| Cookies | `<profile>\Network\Cookies` | `<profile>/Cookies` |
+| Encryption key | DPAPI, `Local State` → `os_crypt.encrypted_key` | Keychain — **no "Helium Safe Storage" item on the owner's Mac; find the real item in phase 0** |
+| Device-bound sessions (DBSC) | not present yet | `Device Bound Sessions` file present → those logins are hardware-bound and must never be copied |
+
+Owner's devices (20 Oct 2026): both Helium **0.19.4.1** / Chromium **155.0.8059.84**. Mac: macOS 27.0.1 arm64, profiles `Default`="Personal", `Profile 1`="Work". Windows: Windows 11 Pro 26100 x64, one near-empty profile `Default`="Your Helium".
+
+- **Test matrix (CI on every change):** Windows x64 + Windows ARM64, macOS Apple Silicon + macOS Intel, oldest and newest OS versions Helium supports, current and previous Helium release, per-user and machine-wide installs, custom `--user-data-dir`, non-English profile names, paths with spaces and non-ASCII characters.
+- **Community compatibility reports:** `scripts/check-*.{sh,ps1}` output (no secrets) lets testers report unusual setups before release.
+
 ## 2. User-facing behaviour
 
 1. **Quit Helium** → helper captures changes, encrypts, uploads (seconds).
