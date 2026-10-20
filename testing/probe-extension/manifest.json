@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "Helium Syncer Test Probe",
+  "version": "0.1.0",
+  "description": "Test-only. Lets the Helium Syncer test suite drive and inspect throwaway test profiles. Never install in a real profile.",
+  "permissions": ["bookmarks", "history", "tabs", "tabGroups", "sessions", "storage", "management", "topSites"],
+  "background": { "service_worker": "probe.js" }
+}

@@ -1,0 +1,212 @@
+// hslab is the phase-0 lab tool: small experiments against throwaway Helium
+// test profiles. It is not the product and never touches a real profile
+// unless a path is given explicitly, and even then only reads.
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/imrishabhchauhan/helium-syncer/internal/cdp"
+	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
+	"github.com/imrishabhchauhan/helium-syncer/internal/prefhash"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("usage: hslab macs <profile-dir> | close <port>")
+		os.Exit(2)
+	}
+	var err error
+	switch os.Args[1] {
+	case "macs":
+		err = macs(os.Args[2])
+	case "resign":
+		err = resign(os.Args[2], os.Args[3:])
+	case "roundtrip":
+		err = roundtrip(os.Args[2])
+	case "close":
+		port, _ := strconv.Atoi(os.Args[2])
+		err = closeBrowser(port)
+	default:
+		err = fmt.Errorf("unknown command %q", os.Args[1])
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+// macs recomputes every legacy MAC in a profile's Preferences and Secure
+// Preferences and reports which ones match what Helium wrote.
+func macs(profile string) error {
+	dev, err := deviceid.Get()
+	if err != nil {
+		return err
+	}
+	calc := prefhash.Calculator{DeviceID: dev}
+	fmt.Printf("device id: %s…%s (len %d)\n", dev[:6], dev[len(dev)-4:], len(dev))
+	for _, file := range []string{"Secure Preferences", "Preferences"} {
+		data, err := os.ReadFile(filepath.Join(profile, file))
+		if err != nil {
+			return err
+		}
+		doc, err := prefhash.Decode(data)
+		if err != nil {
+			return err
+		}
+		macsTree, _ := prefhash.Lookup(doc, "protection.macs").(map[string]any)
+		if macsTree == nil {
+			fmt.Printf("\n[%s] no protection.macs\n", file)
+			continue
+		}
+		var ok, bad []string
+		walk(macsTree, "", func(path, stored string) {
+			if strings.HasSuffix(path, "_encrypted_hash") || strings.Contains(path, "_encrypted_hash.") {
+				return
+			}
+			got := calc.MAC(path, prefhash.ValueString(prefhash.Lookup(doc, path)))
+			if got == stored {
+				ok = append(ok, path)
+			} else {
+				bad = append(bad, path)
+			}
+		})
+		sort.Strings(bad)
+		fmt.Printf("\n[%s] legacy MACs: %d match, %d differ\n", file, len(ok), len(bad))
+		for _, p := range bad {
+			fmt.Println("  differs:", p)
+		}
+		if super, _ := prefhash.Lookup(doc, "protection.super_mac").(string); super != "" {
+			got := calc.MAC("", prefhash.ValueString(macsTree))
+			fmt.Printf("[%s] super_mac match: %v\n", file, got == super)
+		}
+	}
+	return nil
+}
+
+// resign rewrites a TEST profile's Secure Preferences: optional
+// path=<json> assignments, then all legacy MACs recomputed for this machine.
+// Flags: --keep-encrypted keeps the encrypted hashes (default drops them),
+// --device=<id> signs for a different device id (to simulate a foreign PC).
+func resign(profile string, args []string) error {
+	if !strings.Contains(filepath.ToSlash(profile), "/test-profiles/") {
+		return fmt.Errorf("refusing: %s is not under test-profiles/", profile)
+	}
+	file := filepath.Join(profile, "Secure Preferences")
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	v, err := prefhash.Decode(data)
+	if err != nil {
+		return err
+	}
+	doc := v.(map[string]any)
+	dev, err := deviceid.Get()
+	if err != nil {
+		return err
+	}
+	drop := true
+	var extra []string
+	for _, a := range args {
+		switch {
+		case a == "--keep-encrypted":
+			drop = false
+		case strings.HasPrefix(a, "--device="):
+			dev = strings.TrimPrefix(a, "--device=")
+		default:
+			path, raw, ok := strings.Cut(a, "=")
+			if !ok {
+				return fmt.Errorf("bad assignment %q", a)
+			}
+			val, err := prefhash.Decode([]byte(raw))
+			if err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			prefhash.Set(doc, path, val)
+			extra = append(extra, path)
+		}
+	}
+	n := prefhash.Resign(doc, prefhash.Calculator{DeviceID: dev}, drop, extra...)
+	tmp := file + ".hs-tmp"
+	if err := os.WriteFile(tmp, []byte(prefhash.WriteJSON(doc)), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, file); err != nil {
+		return err
+	}
+	fmt.Printf("re-signed %d MACs (encrypted hashes dropped: %v)\n", n, drop)
+	return nil
+}
+
+// roundtrip checks that our serialiser reproduces a Chromium-written JSON
+// file byte for byte, and shows the first difference if not.
+func roundtrip(file string) error {
+	data, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	doc, err := prefhash.Decode(data)
+	if err != nil {
+		return err
+	}
+	got := prefhash.WriteJSON(doc)
+	want := string(data)
+	if got == want {
+		fmt.Printf("roundtrip OK: %d bytes identical\n", len(want))
+		return nil
+	}
+	i := 0
+	for i < len(got) && i < len(want) && got[i] == want[i] {
+		i++
+	}
+	lo := max(0, i-80)
+	fmt.Printf("roundtrip DIFFERS at byte %d (ours %d bytes, file %d bytes)\n", i, len(got), len(want))
+	fmt.Printf("file: …%q\n", want[lo:min(len(want), i+60)])
+	fmt.Printf("ours: …%q\n", got[lo:min(len(got), i+60)])
+	return nil
+}
+
+func walk(node map[string]any, prefix string, fn func(path, mac string)) {
+	for k, v := range node {
+		p := k
+		if prefix != "" {
+			p = prefix + "." + k
+		}
+		switch t := v.(type) {
+		case string:
+			fn(p, t)
+		case map[string]any:
+			walk(t, p, fn)
+		}
+	}
+}
+
+// closeBrowser asks a test instance to shut down cleanly (so it writes its
+// session files), via Browser.close.
+func closeBrowser(port int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	ws, err := cdp.BrowserWSURL(ctx, port)
+	if err != nil {
+		return err
+	}
+	c, err := cdp.Dial(ctx, ws)
+	if err != nil {
+		return err
+	}
+	_, err = c.Call(ctx, "Browser.close", map[string]any{})
+	c.Close()
+	if err != nil && !strings.Contains(err.Error(), "closed") {
+		return err
+	}
+	fmt.Println("closed test instance on port", port)
+	return nil
+}
