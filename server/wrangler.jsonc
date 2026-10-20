@@ -7,7 +7,7 @@
   "compatibility_date": "2026-10-01",
   "observability": { "enabled": true },
   "routes": [{ "pattern": "helium.aiwithrishabh.com", "custom_domain": true }],
-  "d1_databases": [{ "binding": "DB", "database_name": "helium-syncer", "database_id": "REPLACE_WITH_D1_ID" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "helium-syncer", "database_id": "1a5567ff-6569-4439-aa24-a7eeb7e0a529" }],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-blobs" }],
   "vars": { "MAIL_MODE": "resend", "MAIL_FROM": "no-reply@aiwithrishabh.com" },
   "env": {
