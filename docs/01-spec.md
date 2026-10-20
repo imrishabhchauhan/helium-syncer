@@ -38,13 +38,41 @@ Every user's machine is different: install location, per-user vs machine-wide, c
 | User data | `%LOCALAPPDATA%\imput\Helium\User Data` (default) | `~/Library/Application Support/net.imput.helium` (default) |
 | App | `Program Files\imput\Helium\Application\chrome.exe` (machine-wide) or `%LOCALAPPDATA%\…` (per-user) | `Helium.app`, bundle id `net.imput.helium` |
 | Cookies | `<profile>\Network\Cookies` | `<profile>/Cookies` |
-| Encryption key | DPAPI, `Local State` → `os_crypt.encrypted_key` | Keychain — **no "Helium Safe Storage" item on the owner's Mac; find the real item in phase 0** |
+| Encryption key | DPAPI, `Local State` → `os_crypt.encrypted_key` | Keychain item **"Helium Storage Key"** (not the usual "<name> Safe Storage"; a separate "Chromium Safe Storage" item belongs to other Chromium apps — never touch it) |
 | Device-bound sessions (DBSC) | not present yet | `Device Bound Sessions` file present → those logins are hardware-bound and must never be copied |
 
-Owner's devices (20 Oct 2026): both Helium **0.19.4.1** / Chromium **155.0.8059.84**. Mac: macOS 27.0.1 arm64, profiles `Default`="Personal", `Profile 1`="Work". Windows: Windows 11 Pro 26100 x64, one near-empty profile `Default`="Your Helium".
+Owner's devices (20 Oct 2026): both Helium **0.19.4.1** / Chromium **155.0.8059.84**. Mac: MacBook Air M5, macOS 27.0.1 (26A434), Helium arm64-only build, profiles `Default`="Personal", `Profile 1`="Work". Windows: Windows 11 Pro 26100 x64, one near-empty profile `Default`="Your Helium".
 
 - **Test matrix (CI on every change):** Windows x64 + Windows ARM64, macOS Apple Silicon + macOS Intel, oldest and newest OS versions Helium supports, current and previous Helium release, per-user and machine-wide installs, custom `--user-data-dir`, non-English profile names, paths with spaces and non-ASCII characters.
 - **Community compatibility reports:** `scripts/check-*.{sh,ps1}` output (no secrets) lets testers report unusual setups before release.
+
+## 1c. Helium version gate (zero-risk rule)
+
+Owner rule: if there is even a 1% chance that different Helium versions could cause an error, don't sync — tell the user to update first.
+
+- Every device reports its Helium version + Chromium version + profile format versions with each upload.
+- Syncing between two devices is allowed only when **both** versions are on the **tested-compatible list** shipped with the app (built from the CI matrix). Same version on both = allowed only if that version itself is tested.
+- Otherwise: **apply nothing**, keep local changes queued (nothing is lost), and show a plain message, e.g.
+  *"Your Mac has Helium 0.19.5 and this PC has 0.19.4. Update Helium on this PC (Settings → About) to keep syncing. Your changes are saved and will sync after the update."*
+- An unknown newer Helium version on any device → pause everywhere for that data type until Helium Syncer itself is updated ("Helium Syncer needs an update for Helium 0.20").
+- After an update, the first sync does a dry-run check before applying.
+
+## 1d. Never touch the user's existing data
+
+- **Profiles are added, never merged or deleted.** Joining a device adds the other device's profiles as new profiles next to the local ones. Example: Windows has "Your Helium"; joining adds "Personal" and "Work" → Windows shows all three. Removing "Your Helium" is the user's own choice, done in Helium.
+- Local profiles are kept as they are, with their own logins and data. Each gets a "Sync this profile to my other devices" switch on the join screen (on if it has real data, off if it's empty or new).
+- Profiles are only linked to each other if the user explicitly says so.
+- Deletions only ever travel for items that were synced before (tombstones). Data that was never synced is never removed by Helium Syncer.
+
+## 1e. Owner's real data is off-limits during development
+
+The owner's Mac Helium is fully set up with real logins. Until a phase passes every test:
+
+- Tests only use throwaway profiles started with `--user-data-dir=<test folder>`, never the default folder, on both devices.
+- The real profile is only ever **read**, from a copied snapshot, never opened in place.
+- The macOS Keychain item "Helium Storage Key" is never written, deleted or re-created. Reading it (phase 3 only) needs the owner's explicit OK.
+- Before the first real sync: full backup of the whole user data folder, a test restore of that backup, and a dry-run report the owner approves.
+- First real sync direction: **Mac → Windows only** (Windows profile is nearly empty); the Mac is not written to until Windows → Mac passes on test profiles.
 
 ## 2. User-facing behaviour
 
