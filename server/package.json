@@ -1,0 +1,21 @@
+{
+  "name": "helium-syncer-server",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env dev --port 8799",
+    "db:local": "wrangler d1 execute helium-syncer-dev --env dev --local --file schema.sql",
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261005.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.145.0"
+  },
+  "allowScripts": {
+    "workerd@1.20260930.2": true,
+    "esbuild@0.28.1": true
+  }
+}
