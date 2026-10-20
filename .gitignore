@@ -1,0 +1,25 @@
+# Build output
+/bin/
+/dist/
+*.exe
+
+# Local test data and probe reports (may contain profile structure)
+/tmp/
+/test-profiles/
+helium-check-*.txt
+
+# Secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Node (Cloudflare worker)
+node_modules/
+.wrangler/
