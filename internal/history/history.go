@@ -186,6 +186,115 @@ func (h *DB) AddVisits(vs []Visit) (int, error) {
 	return added, tx.Commit()
 }
 
+// Titles returns url -> title for URLs with a visit at or after since.
+func (h *DB) Titles(since int64) (map[string]string, error) {
+	rows, err := h.db.Query(`SELECT url, COALESCE(title,'') FROM urls WHERE last_visit_time >= ?`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var u, t string
+		if err := rows.Scan(&u, &t); err != nil {
+			return nil, err
+		}
+		out[u] = t
+	}
+	return out, rows.Err()
+}
+
+// SetTitles updates the titles of existing URLs.
+func (h *DB) SetTitles(titles map[string]string) error {
+	tx, err := h.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for u, t := range titles {
+		if _, err := tx.Exec(`UPDATE urls SET title = ? WHERE url = ?`, t, u); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// DeleteVisits removes visits identified by (URL, visit_time), the way a
+// history deletion on another device should. A URL left with no visits is
+// removed with its search terms and visited-link rows. It returns how many
+// visits were removed.
+func (h *DB) DeleteVisits(keys [][2]any) (int, error) {
+	tx, err := h.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	removed := 0
+	for _, k := range keys {
+		url, _ := k[0].(string)
+		at, _ := k[1].(int64)
+		var urlID int64
+		if err := tx.QueryRow(`SELECT id FROM urls WHERE url = ?`, url).Scan(&urlID); errors.Is(err, sql.ErrNoRows) {
+			continue
+		} else if err != nil {
+			return 0, err
+		}
+		res, err := tx.Exec(`DELETE FROM visits WHERE url = ? AND visit_time = ?`, urlID, at)
+		if err != nil {
+			return 0, err
+		}
+		n, _ := res.RowsAffected()
+		removed += int(n)
+		var left int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM visits WHERE url = ?`, urlID).Scan(&left); err != nil {
+			return 0, err
+		}
+		if left == 0 {
+			for _, q := range []string{
+				`DELETE FROM keyword_search_terms WHERE url_id = ?`,
+				`DELETE FROM visited_links WHERE link_url_id = ?`,
+				`DELETE FROM urls WHERE id = ?`,
+			} {
+				if _, err := tx.Exec(q, urlID); err != nil {
+					return 0, err
+				}
+			}
+		} else {
+			if _, err := tx.Exec(`UPDATE urls SET visit_count = MAX(0, visit_count - ?),
+					last_visit_time = (SELECT MAX(visit_time) FROM visits WHERE url = ?) WHERE id = ?`, n, urlID, urlID); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return removed, tx.Commit()
+}
+
+// CreateEmptyForTests creates an empty History database with Helium 155's
+// core tables (schema 70). Only for tests: real profiles are created by Helium.
+func CreateEmptyForTests(path string) error {
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path))
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	for _, q := range []string{
+		`CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR)`,
+		`INSERT INTO meta VALUES('version','70'),('last_compatible_version','16')`,
+		`CREATE TABLE urls(id INTEGER PRIMARY KEY AUTOINCREMENT,url LONGVARCHAR,title LONGVARCHAR,visit_count INTEGER DEFAULT 0 NOT NULL,typed_count INTEGER DEFAULT 0 NOT NULL,last_visit_time INTEGER NOT NULL,hidden INTEGER DEFAULT 0 NOT NULL)`,
+		`CREATE TABLE visits(id INTEGER PRIMARY KEY AUTOINCREMENT,url INTEGER NOT NULL,visit_time INTEGER NOT NULL,from_visit INTEGER,external_referrer_url TEXT,transition INTEGER DEFAULT 0 NOT NULL,segment_id INTEGER,visit_duration INTEGER DEFAULT 0 NOT NULL,incremented_omnibox_typed_score BOOLEAN DEFAULT FALSE NOT NULL,opener_visit INTEGER,originator_cache_guid TEXT,originator_visit_id INTEGER,originator_from_visit INTEGER,originator_opener_visit INTEGER,is_known_to_sync BOOLEAN DEFAULT FALSE NOT NULL,consider_for_ntp_most_visited BOOLEAN DEFAULT FALSE NOT NULL,visited_link_id INTEGER DEFAULT 0 NOT NULL,app_id TEXT)`,
+		`CREATE TABLE keyword_search_terms (keyword_id INTEGER NOT NULL,url_id INTEGER NOT NULL,term LONGVARCHAR NOT NULL,normalized_term LONGVARCHAR NOT NULL)`,
+		`CREATE TABLE visited_links(id INTEGER PRIMARY KEY AUTOINCREMENT,link_url_id INTEGER NOT NULL,top_level_url LONGVARCHAR NOT NULL,frame_url LONGVARCHAR NOT NULL,visit_count INTEGER DEFAULT 0 NOT NULL)`,
+		`CREATE INDEX urls_url_index ON urls (url)`,
+		`CREATE INDEX visits_url_index ON visits (url)`,
+		`CREATE INDEX visits_time_index ON visits (visit_time)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func nullable(s string) any {
 	if s == "" {
 		return nil

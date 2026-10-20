@@ -191,7 +191,7 @@ func liveGUIDs(f *bookmarks.File) map[string]bool {
 func TestBookmarksConvergeRandomized(t *testing.T) {
 	for _, nDevices := range []int{2, 3} {
 		for _, withDeletes := range []bool{false, true} {
-			for round := 0; round < 400; round++ {
+			for round := 0; round < rounds(400, 3000); round++ {
 				convergeRound(t, nDevices, withDeletes, round)
 			}
 		}
