@@ -249,6 +249,9 @@ func apply(cfg Config, st *State, clock *crdt.Clock, incoming []crdt.Op, j *jour
 		j.Created = append(j.Created, filepath.Join(cfg.UserData, dir))
 		added = append(added, dir)
 	}
+	if len(plan.Added) > 0 || len(plan.Renamed) > 0 {
+		j.Written = append(j.Written, filepath.Join(cfg.UserData, "Local State"))
+	}
 	sort.Strings(added)
 	if err := writeJournal(cfg.StateDir, *j); err != nil {
 		return nil, nil, err
