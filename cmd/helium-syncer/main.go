@@ -9,14 +9,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/imrishabhchauhan/helium-syncer/internal/agent"
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 	"github.com/imrishabhchauhan/helium-syncer/internal/cloud"
 	"github.com/imrishabhchauhan/helium-syncer/internal/detect"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
+	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
 )
@@ -29,11 +32,15 @@ Getting started
   helium-syncer link <profile>      choose a local profile to sync (folder or name)
 
 Everyday
+  helium-syncer autostart on        sync automatically: after Helium quits, and while it is closed
+  helium-syncer open                last quick sync, then open Helium
   helium-syncer sync                sync now (Helium must be closed)
   helium-syncer sync --dry-run      show what a sync would change, change nothing
   helium-syncer status              what is connected and when it last synced
 
 More
+  helium-syncer autostart off       stop syncing automatically
+  helium-syncer agent               run the background sync in this window (Ctrl+C to stop)
   helium-syncer detect              find Helium on this computer
   helium-syncer profiles            list profiles and which ones sync
   helium-syncer unlink <profile>    stop syncing a profile (its data stays)
@@ -200,6 +207,41 @@ func run(cmd string, pos []string, folder, name, server string, dry, restore boo
 		return cfg.Save()
 	case "status":
 		return status(ctx, cfg)
+	case "agent":
+		return runAgent()
+	case "autostart":
+		if !cfg.Connected() {
+			return app.ErrNotConnected
+		}
+		on := len(pos) == 0 || pos[0] != "off"
+		if err := agent.SetAutostart(on); err != nil {
+			return err
+		}
+		if on {
+			if err := agent.StartDetached(); err != nil {
+				return err
+			}
+			fmt.Println("✓ Helium Syncer now runs in the background and starts when you log in.")
+			fmt.Println("  It syncs a few seconds after you quit Helium, and every few minutes while Helium is closed.")
+		} else {
+			fmt.Println("✓ Automatic sync is off. (A copy already running stops at the next log-out.)")
+		}
+	case "open":
+		if running, _ := helium.IsRunning(cfg.UserData); !running && cfg.Connected() {
+			if ec, err := cfg.EngineConfig(); err == nil {
+				if rep, err := engine.Run(ctx, ec); err == nil && rep.Paused == "" {
+					cfg.LastSync, cfg.LastError = time.Now(), ""
+					printReport(rep)
+				} else if err != nil {
+					fmt.Println("! Sync before opening failed:", friendly(err))
+				} else {
+					fmt.Println("⏸ Sync paused:", rep.Paused)
+				}
+			}
+		}
+		if err := agent.LaunchHelium(); err != nil {
+			return err
+		}
 	case "devices":
 		cl, err := cfg.Client()
 		if err != nil {
@@ -244,6 +286,22 @@ func run(cmd string, pos []string, folder, name, server string, dry, restore boo
 		return fmt.Errorf("unknown command %q (see 'helium-syncer help')", cmd)
 	}
 	return cfg.Save()
+}
+
+func runAgent() error {
+	lock, err := agent.Lock()
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	a, err := agent.New()
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	fmt.Println("Helium Syncer is watching Helium. It syncs after Helium quits. Ctrl+C to stop.")
+	return a.Run(ctx)
 }
 
 func friendly(err error) error {
