@@ -51,8 +51,11 @@ type Config struct {
 // Report says what a run did, for the status line and logs.
 type Report struct {
 	Sent, Received int
+	SentByType     map[string]int // e.g. "bookmark": 12
+	ReceivedByType map[string]int
 	ProfilesAdded  []string
-	Paused         string // version gate message, when sync is paused
+	Written        []string // files changed in Helium's folder, relative to it
+	Paused         string   // version gate message, when sync is paused
 }
 
 // ErrHeliumRunning: the folder is in use; try again after Helium quits.
@@ -116,11 +119,13 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	clock.Restore(st.Clock)
 
 	// 3. Send what an earlier run could not send.
+	rep.SentByType = map[string]int{}
 	if len(st.Outbox) > 0 {
 		if err := cfg.Transport.Push(ctx, st.Outbox); err != nil {
 			return rep, fmt.Errorf("engine: sending queued changes: %w", err)
 		}
 		rep.Sent += len(st.Outbox)
+		addTypes(rep.SentByType, st.Outbox)
 		st.Outbox = nil
 	}
 
@@ -137,6 +142,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	incoming = mine
 	rep.Received = len(incoming)
+	rep.ReceivedByType = countTypes(incoming)
 
 	// 5. Backup, then apply.
 	var dirs []string
@@ -163,6 +169,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 	rep.ProfilesAdded = added
+	for _, w := range j.Written {
+		if rel, err := filepath.Rel(cfg.UserData, w); err == nil {
+			rep.Written = append(rep.Written, rel)
+		}
+	}
 
 	// 6. Remember, then send.
 	st.Cursor = next
@@ -175,6 +186,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if len(out) > 0 {
 		if err := cfg.Transport.Push(ctx, out); err == nil {
 			rep.Sent += len(out)
+			addTypes(rep.SentByType, out)
 			st.Outbox = nil
 			if err := st.Save(cfg.StateDir); err != nil {
 				return rep, err
@@ -349,6 +361,7 @@ func syncProfile(cfg Config, ps *ProfileState, dir string, clock *crdt.Clock, in
 		if err := writeAtomic(f.path, []byte(data)); err != nil {
 			return nil, err
 		}
+		j.Written = append(j.Written, f.path)
 	}
 
 	// Bookmarks.
@@ -373,6 +386,7 @@ func syncProfile(cfg Config, ps *ProfileState, dir string, clock *crdt.Clock, in
 		if err := writeAtomic(bmPath, enc); err != nil {
 			return nil, err
 		}
+		j.Written = append(j.Written, bmPath)
 	}
 
 	// History: only once Helium has created the database for this profile.
@@ -420,15 +434,32 @@ func syncProfile(cfg Config, ps *ProfileState, dir string, clock *crdt.Clock, in
 	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
 	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf)
 	out = append(out, ops...)
-	if len(ops) > 0 || len(tabOps) > 0 {
+	// Only rewrite the session when tabs arrived from another device; this
+	// device's own changes are already in Helium's file.
+	if len(tabOps) > 0 {
 		path, err := sessions.WriteNew(dir, projected)
 		if err != nil {
 			return nil, err
 		}
 		j.Created = append(j.Created, path)
+		j.Written = append(j.Written, path)
 		if err := writeJournal(cfg.StateDir, *j); err != nil {
 			return nil, err
 		}
 	}
 	return out, nil
+}
+
+// countTypes counts ops per data type (without the profile scope).
+func countTypes(ops []crdt.Op) map[string]int {
+	m := map[string]int{}
+	addTypes(m, ops)
+	return m
+}
+
+func addTypes(m map[string]int, ops []crdt.Op) {
+	for _, op := range ops {
+		_, t := splitScope(op.Type)
+		m[t]++
+	}
 }

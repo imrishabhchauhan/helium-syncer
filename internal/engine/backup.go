@@ -22,6 +22,7 @@ var profileFiles = []string{"Bookmarks", "History", "History-journal", "Preferen
 type journal struct {
 	Backup  string   `json:"backup"`  // backup folder
 	Created []string `json:"created"` // paths this sync created (removed on recovery)
+	Written []string `json:"written"` // every file this sync wrote (for the report)
 }
 
 // backup copies every file a sync may change into a new dated folder.

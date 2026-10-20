@@ -153,6 +153,74 @@ func TestOfflineChangesWaitAndAreSentOnce(t *testing.T) {
 	}
 }
 
+func TestDryRunTouchesNothing(t *testing.T) {
+	ctx := context.Background()
+	server := NewMemory()
+	macUD, winUD := fakeUserData(t, ver), fakeUserData(t, ver)
+	mac, win := cfgFor(t, "mac", macUD, server), cfgFor(t, "win", winUD, server)
+	LinkProfile(mac.StateDir, mac.DeviceID, "Default")
+	addBookmark(t, macUD, "dry", "Only in a dry run")
+
+	snap := func(dir string) string {
+		var b strings.Builder
+		filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				data, _ := os.ReadFile(p)
+				b.WriteString(p + "=" + string(data) + "\n")
+			}
+			return nil
+		})
+		return b.String()
+	}
+	before, stateBefore := snap(macUD), snap(mac.StateDir)
+	rep, err := DryRun(ctx, mac)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap(macUD) != before || snap(mac.StateDir) != stateBefore {
+		t.Fatal("a dry run changed real files")
+	}
+	if server.Ops() != 0 {
+		t.Fatalf("a dry run sent %d ops", server.Ops())
+	}
+	if rep.SentByType["bookmark"] == 0 {
+		t.Fatalf("the dry run should report the bookmark it would send: %+v", rep.Report)
+	}
+	t.Logf("mac dry run: would change %v, would create %v, would send %v", rep.WouldChange, rep.WouldCreate, rep.SentByType)
+
+	// Real Mac sync, then a dry run on Windows shows the new profile.
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	wrep, err := DryRun(ctx, win)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wrep.ProfilesAdded) != 1 || len(wrep.WouldCreate) == 0 {
+		t.Fatalf("Windows dry run should show one new profile: %+v", wrep)
+	}
+	if exists(filepath.Join(winUD, "Profile 1")) {
+		t.Fatal("the dry run created a real profile")
+	}
+}
+
+// The first sync of an already set-up device must leave its files alone.
+func TestFirstSyncOfSetUpDeviceWritesNothing(t *testing.T) {
+	ctx := context.Background()
+	ud := fakeUserData(t, ver)
+	addBookmark(t, ud, "keep", "Existing bookmark")
+	cfg := cfgFor(t, "mac", ud, NewMemory())
+	cfg.RestoreTabs = false
+	LinkProfile(cfg.StateDir, cfg.DeviceID, "Default")
+	rep, err := Run(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Written) != 0 {
+		t.Fatalf("first sync of the Mac must not write any Helium file, wrote %v", rep.Written)
+	}
+}
+
 func TestVersionGatePausesWithoutTouchingFiles(t *testing.T) {
 	ctx := context.Background()
 	server := NewMemory()

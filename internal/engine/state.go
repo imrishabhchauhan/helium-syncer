@@ -93,6 +93,34 @@ func LinkProfile(stateDir, deviceID, dir string) (string, error) {
 	return id, st.Save(stateDir)
 }
 
+// UnlinkProfile stops syncing a local profile folder (its data stays).
+func UnlinkProfile(stateDir, deviceID, dir string) error {
+	st, err := LoadState(stateDir, deviceID)
+	if err != nil {
+		return err
+	}
+	delete(st.Links, dir)
+	return st.Save(stateDir)
+}
+
+// Links returns the linked profile folders and their synced ids.
+func Links(stateDir, deviceID string) (map[string]string, error) {
+	st, err := LoadState(stateDir, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	return st.Links, nil
+}
+
+// Pending returns how many changes wait to be sent.
+func Pending(stateDir, deviceID string) (int, error) {
+	st, err := LoadState(stateDir, deviceID)
+	if err != nil {
+		return 0, err
+	}
+	return len(st.Outbox), nil
+}
+
 // LoadState reads the state, or returns a fresh one for deviceID.
 func LoadState(dir, deviceID string) (*State, error) {
 	data, err := os.ReadFile(filepath.Join(dir, stateFile))
