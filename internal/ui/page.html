@@ -220,6 +220,18 @@ function ask(title, body, verb, risky) {
     box.onclick = (e) => { if (e.target === box) done(false); };
   });
 }
+// The app copies the code (browser clipboard access is not allowed in every
+// window). The button is kept before the wait: the click event is gone after it.
+async function copyCode(e) {
+  const b = e.currentTarget, label = b.innerHTML;
+  b.disabled = true; hideError();
+  try {
+    await api("copy-code", {});
+    b.innerHTML = svg("check") + "Copied"; say("Copied.");
+    setTimeout(() => { if (b.isConnected) b.innerHTML = label; }, 2500);
+  } catch (err) { showError(err); }
+  finally { b.disabled = false; }
+}
 // App windows cannot open links: the app opens them in the browser.
 const openLink = (url) => api("open", { url }).catch(showError);
 
@@ -427,7 +439,7 @@ async function vCode() {
     <div><label class="check"><input type="checkbox" id="saved" aria-describedby="saved-hint" ${state.freshCode ? "" : "checked"}>I saved it in my password manager.</label><p class="hint" id="saved-hint"></p></div>
     ${actions(back(), '<button class="primary" id="next">Continue</button>')}
   </div>${pairPic()}</div>`, () => {
-    $("copy").onclick = (e) => guard(e.currentTarget, async () => { await api("copy-code", {}); e.currentTarget.innerHTML = svg("check") + "Copied"; say("Copied."); });
+    $("copy").onclick = copyCode;
     $("saved").onchange = () => ($("saved-hint").textContent = "");
     $("back").onclick = async (e) => {
       const b = e.currentTarget;
@@ -654,7 +666,7 @@ function renderSettings() {
     api("settings", { [field]: v }).then((st) => { state = st; say("Saved."); }).catch(showError);
   });
   saveText("s-person", "personName", "personName"); saveText("s-dev", "name", "deviceName");
-  $("s-copy").onclick = (e) => guard(e.currentTarget, async () => { await api("copy-code", {}); e.currentTarget.innerHTML = svg("check") + "Copied"; say("Copied."); });
+  $("s-copy").onclick = copyCode;
   $("s-show").onclick = async (e) => {
     const el = $("s-code");
     if (el.dataset.shown) { el.textContent = "Hidden"; el.style.fontFamily = ""; delete el.dataset.shown; e.target.textContent = "Show"; return; }
