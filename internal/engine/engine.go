@@ -100,6 +100,30 @@ type Report struct {
 	ProfilesAdded  []string
 	Written        []string // files changed in Helium's folder, relative to it
 	Paused         string   // version gate message, when sync is paused
+	// Took is how long each step took, in milliseconds, e.g. "pull": 120.
+	// Steps inside profiles add up over all profiles.
+	Took map[string]int64 `json:",omitempty"`
+}
+
+// step measures one step of a run into rep.Took: defer rep.step("pull")().
+func (rep *Report) step(name string) func() {
+	start := time.Now()
+	return func() {
+		if rep.Took == nil {
+			rep.Took = map[string]int64{}
+		}
+		rep.Took[name] += time.Since(start).Milliseconds()
+	}
+}
+
+// timer is the report of the run in progress, for steps deep inside it.
+type timerKey struct{}
+
+func stepIn(ctx context.Context, name string) func() {
+	if rep, ok := ctx.Value(timerKey{}).(*Report); ok {
+		return rep.step(name)
+	}
+	return func() {}
 }
 
 // ErrHeliumRunning: the folder is in use; try again after Helium quits.
@@ -145,7 +169,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	ctx = context.WithValue(ctx, timerKey{}, &rep)
+	defer rep.step("total")()
+	done := rep.step("versions")
 	peers, err := cfg.Transport.Versions(ctx, cfg.DeviceID)
+	done()
 	if err != nil {
 		return rep, err
 	}
@@ -158,7 +186,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 
+	done = rep.step("load state")
 	st, err := LoadState(cfg.StateDir, cfg.DeviceID)
+	done()
 	if err != nil {
 		return rep, err
 	}
@@ -177,7 +207,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 
 	// 4. Receive.
+	done = rep.step("pull")
 	incoming, next, err := cfg.Transport.Pull(ctx, st.Cursor)
+	done()
 	if err != nil {
 		return rep, err
 	}
@@ -197,7 +229,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		dirs = append(dirs, d)
 	}
 	sort.Strings(dirs)
+	done = rep.step("backup")
 	bk, err := backup(cfg.StateDir, cfg.UserData, dirs, cfg.Now())
+	done()
 	if err != nil {
 		return rep, fmt.Errorf("engine: backup failed, nothing was changed: %w", err)
 	}
@@ -206,7 +240,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 
+	done = rep.step("apply")
 	out, added, err := apply(ctx, cfg, st, clock, incoming, &j)
+	done()
 	if err != nil {
 		// Put everything back exactly as it was.
 		if rerr := restore(cfg.UserData, j); rerr != nil {
@@ -226,12 +262,18 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	st.Cursor = next
 	st.Clock = clock.Last()
 	st.Outbox = out
-	if err := st.Save(cfg.StateDir); err != nil {
+	done = rep.step("save state")
+	err = st.Save(cfg.StateDir)
+	done()
+	if err != nil {
 		return rep, err
 	}
 	os.Remove(filepath.Join(cfg.StateDir, journalFile))
 	if len(out) > 0 {
-		if err := cfg.Transport.Push(ctx, out); err == nil {
+		done = rep.step("push")
+		err := cfg.Transport.Push(ctx, out)
+		done()
+		if err == nil {
 			rep.Sent += len(out)
 			addTypes(rep.SentByType, out)
 			st.Outbox = nil
@@ -428,6 +470,8 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 
 	// Bookmarks.
+	done := stepIn(ctx, "bookmarks")
+	defer func() { done() }()
 	if cfg.Off[KindBookmarks] {
 		keep(clock, byType[merge.TypeBookmark], func(crdt.Op) *crdt.Map { return ps.Bookmarks })
 	} else {
@@ -460,6 +504,8 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 
 	// Extensions (after settings: both live in Secure Preferences).
+	done()
+	done = stepIn(ctx, "extensions")
 	extOps := append(byType[merge.TypeExtension], byType[merge.TypeExtData]...)
 	if cfg.Off[KindExtensions] {
 		keep(clock, extOps, func(op crdt.Op) *crdt.Map {
@@ -477,6 +523,8 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 
 	// History: only once Helium has created the database for this profile.
+	done()
+	done = stepIn(ctx, "history")
 	histOps := append(byType[merge.TypeVisit], byType[merge.TypeTitle]...)
 	if hp := filepath.Join(dir, "History"); exists(hp) && !cfg.Off[KindHistory] {
 		if err := closed(cfg); err != nil {
@@ -506,6 +554,8 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 
 	// Open tabs.
+	done()
+	done = stepIn(ctx, "tabs")
 	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
 	if cfg.Off[KindTabs] {
 		keep(clock, tabOps, func(op crdt.Op) *crdt.Map {

@@ -54,16 +54,15 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 	}
 	dataFor := func(upload bool) func(id string) (merge.ExtData, error) {
 		return func(id string) (merge.ExtData, error) {
-			h, err := extensions.DataHash(dir, id)
+			if !extensions.SyncsData(dir, id) {
+				return merge.ExtData{}, nil // password manager, or too big: never sent
+			}
+			data, h, err := extensions.PackDataHash(dir, id) // packed once per sync
 			if err != nil || h == "" {
 				return merge.ExtData{}, err
 			}
 			if d := ps.DataBlobs[id]; d.Hash == h || !upload {
 				return merge.ExtData{Hash: h, Blob: d.Blob}, nil
-			}
-			data, err := extensions.PackData(dir, id)
-			if err != nil {
-				return merge.ExtData{}, err
 			}
 			b, err := blobs.PutBlob(ctx, data)
 			if err != nil {
@@ -156,6 +155,9 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 		changed = true
 	}
 	for _, id := range plan.LoadData {
+		if extensions.NeverSyncsData(id) {
+			continue // a password manager's data stays on its own computer
+		}
 		raw, _ := ps.ExtData.Get(id)
 		var d merge.ExtData
 		if json.Unmarshal(raw, &d) != nil || d.Blob == "" {

@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -393,9 +395,32 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	}
 	a.Status.LastSync, a.Status.LastReport, a.Status.LastError, a.Status.Paused = a.Now(), rep, "", ""
 	if rep.Sent+rep.Received > 0 || reason != "periodic" {
-		a.logf("%s: sent %d, received %d, wrote %v", reason, rep.Sent, rep.Received, rep.Written)
+		a.logf("%s: sent %d, received %d, wrote %v, took %s", reason, rep.Sent, rep.Received, rep.Written, tookLine(rep.Took))
 	}
 	return nil
+}
+
+// tookLine is "1.9 s (versions 1060 ms, pull 651 ms, ...)", slowest first.
+func tookLine(m map[string]int64) string {
+	type kv struct {
+		k string
+		v int64
+	}
+	var l []kv
+	for k, v := range m {
+		if k != "total" && v > 0 {
+			l = append(l, kv{k, v})
+		}
+	}
+	sort.Slice(l, func(i, j int) bool { return l[i].v > l[j].v })
+	if len(l) > 4 {
+		l = l[:4]
+	}
+	var parts []string
+	for _, x := range l {
+		parts = append(parts, fmt.Sprintf("%s %d ms", x.k, x.v))
+	}
+	return fmt.Sprintf("%.1f s (%s)", float64(m["total"])/1000, strings.Join(parts, ", "))
 }
 
 func (a *Agent) logf(format string, args ...any) {

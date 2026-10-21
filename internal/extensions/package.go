@@ -272,8 +272,12 @@ func DataHash(profile, id string) (string, error) {
 	if err != nil || n == 0 {
 		return "", err
 	}
+	return hashOf(pkg), nil
+}
+
+func hashOf(pkg []byte) string {
 	sum := sha256.Sum256(pkg)
-	return hex.EncodeToString(sum[:]), nil
+	return hex.EncodeToString(sum[:])
 }
 
 // PackData bundles an extension's data folders.

@@ -440,6 +440,7 @@ func printReport(rep engine.Report) {
 	} else {
 		fmt.Println("  Updated:", strings.Join(rep.Written, ", "))
 	}
+	took(rep.Took)
 }
 
 func printDry(rep engine.DryRunReport) {
@@ -457,6 +458,28 @@ func printDry(rep engine.DryRunReport) {
 	for _, f := range rep.WouldCreate {
 		fmt.Println("  Would create:", f)
 	}
+	took(rep.Took)
+}
+
+// took prints how long each step took, slowest first.
+func took(m map[string]int64) {
+	if len(m) == 0 {
+		return
+	}
+	type kv struct {
+		k string
+		v int64
+	}
+	var l []kv
+	for k, v := range m {
+		l = append(l, kv{k, v})
+	}
+	sort.Slice(l, func(i, j int) bool { return l[i].v > l[j].v })
+	var parts []string
+	for _, x := range l {
+		parts = append(parts, fmt.Sprintf("%s %d ms", x.k, x.v))
+	}
+	fmt.Println("  Time:", strings.Join(parts, ", "))
 }
 
 func byType(m map[string]int) string {

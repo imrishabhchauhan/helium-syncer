@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
@@ -18,8 +20,20 @@ import (
 
 // Profile is one entry of info_cache.
 type Profile struct {
-	Dir  string // folder name, e.g. "Default", "Profile 1"
-	Name string
+	Dir           string // folder name, e.g. "Default", "Profile 1"
+	Name          string
+	Avatar        int  // built-in picture number (IDR_PROFILE_AVATAR_n), -1 if not known
+	DefaultAvatar bool // Helium shows its default picture in the profile colour
+}
+
+var avatarRe = regexp.MustCompile(`IDR_PROFILE_AVATAR_(\d+)$`)
+
+func avatarOf(icon string) int {
+	if m := avatarRe.FindStringSubmatch(icon); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	return -1
 }
 
 func loadLocalState(userData string) (map[string]any, error) {
@@ -49,7 +63,9 @@ func List(userData string) ([]Profile, error) {
 	for dir, v := range cache {
 		m, _ := v.(map[string]any)
 		name, _ := m["name"].(string)
-		out = append(out, Profile{Dir: dir, Name: name})
+		icon, _ := m["avatar_icon"].(string)
+		def, _ := m["is_using_default_avatar"].(bool)
+		out = append(out, Profile{Dir: dir, Name: name, Avatar: avatarOf(icon), DefaultAvatar: def})
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Dir < out[b].Dir })
 	return out, nil
@@ -77,6 +93,39 @@ func Rename(userData, dir, name string) error {
 			if p, ok := v.(map[string]any); ok {
 				chromejson.Set(p, "profile.name", name)
 				chromejson.Set(p, "profile.using_default_name", false)
+				if err := writeAtomic(prefsPath, []byte(chromejson.Compact(p))); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return writeAtomic(filepath.Join(userData, "Local State"), []byte(chromejson.Compact(doc)))
+}
+
+// SetAvatar sets a profile's picture in Local State and in the profile's
+// Preferences (Helium reads the picture from both). Helium must not be
+// running.
+func SetAvatar(userData, dir string, avatar int, isDefault bool) error {
+	if avatar < 0 {
+		return errors.New("profiles: no picture number")
+	}
+	doc, err := loadLocalState(userData)
+	if err != nil {
+		return err
+	}
+	entry, _ := chromejson.Lookup(doc, "profile.info_cache."+dir).(map[string]any)
+	if entry == nil {
+		return fmt.Errorf("profiles: no profile %q", dir)
+	}
+	f := func(s string) any { v, _ := chromejson.Decode([]byte(s)); return v }
+	entry["avatar_icon"] = fmt.Sprintf("chrome://theme/IDR_PROFILE_AVATAR_%d", avatar)
+	entry["is_using_default_avatar"] = isDefault
+	prefsPath := filepath.Join(userData, dir, "Preferences")
+	if data, err := os.ReadFile(prefsPath); err == nil {
+		if v, err := chromejson.Decode(data); err == nil {
+			if p, ok := v.(map[string]any); ok {
+				chromejson.Set(p, "profile.avatar_index", f(strconv.Itoa(avatar)))
+				chromejson.Set(p, "profile.using_default_avatar", isDefault)
 				if err := writeAtomic(prefsPath, []byte(chromejson.Compact(p))); err != nil {
 					return err
 				}

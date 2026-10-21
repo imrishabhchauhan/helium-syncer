@@ -109,3 +109,53 @@ func TestAddProfilesWithHelium(t *testing.T) {
 		t.Error("the existing Default profile's bookmarks changed")
 	}
 }
+
+// Helium keeps the picture that Helium Syncer writes: for a new profile,
+// and after a change, when Helium starts and quits again.
+func TestPictureWithHelium(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	root, _ := filepath.Abs("../..")
+	ud := filepath.Join(root, "test-profiles", fmt.Sprintf("it-picture-%d", time.Now().Unix()))
+	probe := filepath.Join(root, "testing", "probe-extension")
+	opts := testkit.Options{Exe: heliumExe(t), UserDataDir: ud, Port: 9355, ProbeDir: probe}
+	in, err := testkit.Start(ctx, opts) // a fresh Helium makes its Local State
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := Add(ud, "Picture", 31)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(want int, wantDefault bool, when string) {
+		t.Helper()
+		o := opts
+		o.ProfileDir = dir
+		in, err := testkit.Start(ctx, o)
+		if err != nil {
+			t.Fatalf("%s: open: %v", when, err)
+		}
+		time.Sleep(2 * time.Second)
+		if err := in.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		list, _ := List(ud)
+		for _, p := range list {
+			if p.Dir == dir {
+				if p.Avatar != want || p.DefaultAvatar != wantDefault {
+					t.Fatalf("%s: Helium shows picture %d (default %v), want %d (default %v)", when, p.Avatar, p.DefaultAvatar, want, wantDefault)
+				}
+				return
+			}
+		}
+		t.Fatalf("%s: profile gone", when)
+	}
+	check(31, false, "new profile")
+	if err := SetAvatar(ud, dir, 40, false); err != nil {
+		t.Fatal(err)
+	}
+	check(40, false, "after a change")
+}

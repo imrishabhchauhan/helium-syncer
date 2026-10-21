@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/crdt"
@@ -152,4 +153,71 @@ func TestSameProfileNameGetsLocalEnding(t *testing.T) {
 		t.Fatalf("ending kept after the clash went away: %v", winSuffix)
 	}
 	_ = macBase
+}
+
+// The profile picture follows: when the profile is added on the other
+// computer, and when it changes later.
+func TestProfilePictureFollows(t *testing.T) {
+	mac := userDataWith(t, map[string]string{"Default": "Work"})
+	win := userDataWith(t, map[string]string{"Default": "Your Helium"})
+	if err := profiles.SetAvatar(mac, "Default", 31, false); err != nil {
+		t.Fatal(err)
+	}
+	macLinks, winLinks := ProfileLinks{}, ProfileLinks{}
+	macLinks.LinkNew("Default")
+	avatar := func(int) int { return 26 }
+	macState, winState := crdt.NewMap(), crdt.NewMap()
+	macClock, winClock := crdt.NewClock("mac", nil), crdt.NewClock("win", nil)
+	macBase, out, _, err := SyncProfiles(mac, macLinks, nil, map[string]json.RawMessage{}, macState, macClock, nil, avatar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winBase, _, plan, err := SyncProfiles(win, winLinks, nil, map[string]json.RawMessage{}, winState, winClock, out, avatar)
+	if err != nil || len(plan.Added) != 1 {
+		t.Fatalf("add: %v %+v", err, plan)
+	}
+	added := ""
+	for d := range plan.Added {
+		added = d
+	}
+	pic := func(ud, dir string) (int, bool) {
+		list, _ := profiles.List(ud)
+		for _, p := range list {
+			if p.Dir == dir {
+				return p.Avatar, p.DefaultAvatar
+			}
+		}
+		return -2, false
+	}
+	if a, _ := pic(win, added); a != 31 {
+		t.Fatalf("added profile has picture %d, want 31 like the Mac", a)
+	}
+	prefs, _ := os.ReadFile(filepath.Join(win, added, "Preferences"))
+	if !strings.Contains(string(prefs), `"avatar_index":31`) {
+		t.Fatalf("Preferences of the added profile: %s", prefs)
+	}
+	// The Mac picks the default picture in the profile colour.
+	if err := profiles.SetAvatar(mac, "Default", 26, true); err != nil {
+		t.Fatal(err)
+	}
+	_, out, _, _ = SyncProfiles(mac, macLinks, nil, macBase, macState, macClock, nil, avatar)
+	SyncProfiles(win, winLinks, nil, winBase, winState, winClock, out, avatar)
+	if a, def := pic(win, added); a != 26 || !def {
+		t.Fatalf("after the change: picture %d default %v, want 26 true", a, def)
+	}
+	// Your Helium, not synced, keeps its own picture.
+	if a, _ := pic(win, "Default"); a != -1 {
+		t.Fatalf("an unsynced profile was changed: %d", a)
+	}
+}
+
+// Items from older versions carry no picture: the picture here stays.
+func TestOldItemsKeepThePicture(t *testing.T) {
+	if !sameAvatar(ProfileItem{Name: "A"}, ProfileItem{Name: "A"}) {
+		t.Fatal("an item without a picture must not change the picture here")
+	}
+	a, b := 30, 31
+	if sameAvatar(ProfileItem{Avatar: &a}, ProfileItem{Avatar: &b}) {
+		t.Fatal("different pictures must be seen")
+	}
 }

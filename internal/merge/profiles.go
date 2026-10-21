@@ -16,8 +16,19 @@ const TypeProfile = "profile"
 
 // ProfileItem is the synced form of a profile.
 type ProfileItem struct {
-	Name   string `json:"n"`
-	Avatar int    `json:"a,omitempty"`
+	Name string `json:"n"`
+	// The picture. Nil in items from older versions: then the picture here
+	// is left as it is.
+	Avatar        *int `json:"a,omitempty"`
+	DefaultAvatar bool `json:"d,omitempty"`
+}
+
+// sameAvatar reports whether a local item already shows want's picture.
+func sameAvatar(local, want ProfileItem) bool {
+	if want.Avatar == nil {
+		return true // an item from an older version: keep the picture here
+	}
+	return local.Avatar != nil && *local.Avatar == *want.Avatar && local.DefaultAvatar == want.DefaultAvatar
 }
 
 // ProfileLinks maps this device's profile folders to synced profile ids.
@@ -92,9 +103,18 @@ func SyncProfiles(userData string, links ProfileLinks, suffix map[string]string,
 			if err != nil {
 				return nil, nil, plan, err
 			}
-			newDir, err := profiles.Add(userData, p.Name+end, avatarFor(i))
+			avatar := avatarFor(i)
+			if p.Avatar != nil {
+				avatar = *p.Avatar // the same picture as on the other computer
+			}
+			newDir, err := profiles.Add(userData, p.Name+end, avatar)
 			if err != nil {
 				return nil, nil, plan, err
+			}
+			if p.Avatar != nil && p.DefaultAvatar {
+				if err := profiles.SetAvatar(userData, newDir, avatar, true); err != nil {
+					return nil, nil, plan, err
+				}
 			}
 			links[newDir] = id
 			if end != "" {
@@ -120,6 +140,12 @@ func SyncProfiles(userData string, links ProfileLinks, suffix map[string]string,
 					suffix[dir] = end
 				}
 				plan.Renamed = append(plan.Renamed, dir)
+			}
+			if !sameAvatar(local, p) {
+				if err := profiles.SetAvatar(userData, dir, *p.Avatar, p.DefaultAvatar); err != nil {
+					return nil, nil, plan, err
+				}
+				plan.Renamed = append(plan.Renamed, dir) // changed here: Helium reloads it
 			}
 		}
 	}
@@ -169,7 +195,12 @@ func extractProfiles(userData string, links ProfileLinks, suffix map[string]stri
 					delete(suffix, p.Dir) // the person renamed it here: their name syncs
 				}
 			}
-			raw, _ := json.Marshal(ProfileItem{Name: name})
+			it := ProfileItem{Name: name}
+			if p.Avatar >= 0 {
+				a := p.Avatar
+				it.Avatar, it.DefaultAvatar = &a, p.DefaultAvatar
+			}
+			raw, _ := json.Marshal(it)
 			out[id] = raw
 		}
 	}
