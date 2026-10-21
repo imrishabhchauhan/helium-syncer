@@ -69,13 +69,13 @@ On a Mac, "close Helium" means **Command + Q**. A closed window is not enough.
 
 ## See it
 
-The setup takes a few minutes. These are the real screens, with test data. The pictures inside them are real Helium windows.
+The setup takes a few minutes. These are the real screens of the app window, with test data. The pictures inside them are real Helium windows.
 
 <table>
-<tr><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/1-hello-dark.webp"><img src="docs/images/1-hello-light.webp" width="400" alt="1. Helium Syncer asks your name."></picture><br>1. Helium Syncer asks your name.</td><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/2-how-dark.webp"><img src="docs/images/2-how-light.webp" width="400" alt="2. An example shows how it works."></picture><br>2. An example shows how it works.</td></tr>
-<tr><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/3-choose-dark.webp"><img src="docs/images/3-choose-light.webp" width="400" alt="3. You start a new sync, or you join one."></picture><br>3. You start a new sync, or you join one.</td><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/4-join-dark.webp"><img src="docs/images/4-join-light.webp" width="400" alt="4. To join, you type your sync code."></picture><br>4. To join, you type your sync code.</td></tr>
-<tr><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/5-what-dark.webp"><img src="docs/images/5-what-light.webp" width="400" alt="5. You select what syncs. The real Helium window shows where each item is."></picture><br>5. You select what syncs.</td><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/6-battery-dark.webp"><img src="docs/images/6-battery-light.webp" width="400" alt="6. On a laptop, you select a battery mode."></picture><br>6. On a laptop, you select a battery mode.</td></tr>
-<tr><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/7-preview-dark.webp"><img src="docs/images/7-preview-light.webp" width="400" alt="7. You check what changes. Nothing changes before you agree."></picture><br>7. You check what changes. Nothing changes before you agree.</td><td valign="top"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/images/8-home-dark.webp"><img src="docs/images/8-home-light.webp" width="400" alt="8. Home: status, your computers and settings."></picture><br>8. Home: status, your computers and settings.</td></tr>
+<tr><td valign="top"><img src="docs/images/1-name.webp" width="400" alt="1. Type your name."><br>1. Type your name.</td><td valign="top"><img src="docs/images/2-how.webp" width="400" alt="2. See how it works, in 3 steps."><br>2. See how it works, in 3 steps.</td></tr>
+<tr><td valign="top"><img src="docs/images/3-choose.webp" width="400" alt="3. Start a new sync, or join one."><br>3. Start a new sync, or join one.</td><td valign="top"><img src="docs/images/4-profiles.webp" width="400" alt="4. Select your profiles."><br>4. Select your profiles.</td></tr>
+<tr><td valign="top"><img src="docs/images/5-what.webp" width="400" alt="5. Select what syncs. The real Helium window shows each item."><br>5. Select what syncs. The real Helium window shows each item.</td><td valign="top"><img src="docs/images/6-battery.webp" width="400" alt="6. On a laptop, select a battery mode."><br>6. On a laptop, select a battery mode.</td></tr>
+<tr><td valign="top"><img src="docs/images/7-check.webp" width="400" alt="7. Check what changes. Nothing changes before you agree."><br>7. Check what changes. Nothing changes before you agree.</td><td valign="top"><img src="docs/images/8-home.webp" width="400" alt="8. Home: status, computers and settings."><br>8. Home: status, computers and settings.</td></tr>
 </table>
 
 ## What syncs
@@ -106,20 +106,20 @@ You can switch each item on or off, on each computer.
 **On your first computer:**
 
 1. Install [Helium](https://helium.computer). Open Helium one time. Then close Helium.
-2. Open **Helium Syncer**. It opens a window in your browser.
-3. Type your name. Helium Syncer shows a short example of how it works.
-4. Select **Yes, this is my first computer**.
-5. Save your **sync code** in your password manager. The code looks like `K7QM-2XPA-9RTD-…`.
-6. Select what you want to sync. Select which profiles you want to sync.
-7. Read the check. It shows what Helium Syncer will send and get. Nothing changes before you select **Start sync**.
+2. Open **Helium Syncer**. It opens in its own window.
+3. Type your name. Helium Syncer shows how it works in 3 steps.
+4. Select **Yes**. Save your **sync code** in your password manager.
+5. Select what you want to sync and which profiles.
+6. Read the check. Nothing changes before you select **Start sync**.
 
 **On each other computer:**
 
 1. Install Helium and Helium Syncer.
 2. Open Helium Syncer. Type your name.
-3. Select **No, I use it on a different computer**.
-4. Type your sync code.
-5. Read the check. Then select **Start sync**.
+3. Select **No, I use it on a different computer**. Type your sync code.
+4. Read the check. Then select **Start sync**.
+
+Each step has a **Back** button.
 
 After this, Helium Syncer works by itself. It shows an icon next to the clock (Windows) or in the menu bar (Mac):
 

@@ -24,6 +24,7 @@ import (
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/agent"
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
+	"github.com/imrishabhchauhan/helium-syncer/internal/clipboard"
 	"github.com/imrishabhchauhan/helium-syncer/internal/cloud"
 	"github.com/imrishabhchauhan/helium-syncer/internal/detect"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
@@ -47,6 +48,7 @@ type Server struct {
 	pw        power.State
 	pwAt      time.Time
 	lastRep   *engine.Report // the last sync this window ran itself
+	kind      string
 }
 
 // SetAgent hands the running background sync to the page.
@@ -178,7 +180,21 @@ type stateView struct {
 	HasBattery  bool           `json:"hasBattery"`
 	OnBattery   bool           `json:"onBattery"`
 	PowerNote   string         `json:"powerNote,omitempty"`
+	Theme       string         `json:"theme"` // light (default) or dark
+	DeviceKind  string         `json:"deviceKind"`
 }
+
+func (s *Server) deviceKind() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.kind == "" {
+		s.kind = app.DeviceKind()
+	}
+	return s.kind
+}
+
+// openable are the only pages the window may open, in the browser.
+var openable = []string{"https://helium.computer", "https://github.com/imrishabhchauhan/helium-syncer"}
 
 // powerState is read at most once a minute (on macOS it starts pmset).
 func (s *Server) powerState() power.State {
@@ -211,7 +227,10 @@ func (s *Server) state() (stateView, error) {
 	v := stateView{Connected: cfg.Connected(), DeviceName: cfg.DeviceName, RestoreTabs: cfg.RestoreTabs, SetupDone: cfg.SetupDone,
 		Autostart: agent.Autostart(), AppVersion: app.Version, LastError: cfg.LastError,
 		PersonName: cfg.PersonName, OS: runtime.GOOS, HeliumDir: cfg.UserData, Kinds: engine.Kinds, Off: append([]string{}, cfg.Off...),
-		Battery: battery, HasBattery: pw.HasBattery, OnBattery: pw.OnBattery}
+		Battery: battery, HasBattery: pw.HasBattery, OnBattery: pw.OnBattery, Theme: "light", DeviceKind: s.deviceKind()}
+	if cfg.Theme == "dark" {
+		v.Theme = "dark"
+	}
 	if !cfg.LastSync.IsZero() {
 		v.LastSync = cfg.LastSync.UnixMilli()
 	}
@@ -318,6 +337,37 @@ func (s *Server) api(r *http.Request) (any, error) {
 		s.mu.Unlock()
 		return s.state()
 
+	case "POST /api/open":
+		// App windows cannot open links themselves: the app opens the browser.
+		var in struct {
+			URL string `json:"url"`
+		}
+		if err := decode(r, &in); err != nil {
+			return nil, err
+		}
+		for _, u := range openable {
+			if in.URL == u || strings.HasPrefix(in.URL, u+"/") {
+				return map[string]bool{"ok": true}, agent.OpenBrowser(in.URL)
+			}
+		}
+		return nil, errors.New("this link is not allowed")
+
+	case "POST /api/copy-code":
+		// The app copies the code itself: browser clipboard access is not
+		// allowed in every window.
+		s.mu.Lock()
+		code := s.freshCode
+		s.mu.Unlock()
+		if code == "" {
+			if code, err = app.Code(); err != nil {
+				return nil, err
+			}
+		}
+		if err := clipboard.Write(code); err != nil {
+			return nil, fmt.Errorf("Copy did not work (%v). Select the code and copy it.", err)
+		}
+		return map[string]bool{"copied": true}, nil
+
 	case "GET /api/code":
 		code, err := app.Code()
 		if err != nil {
@@ -407,6 +457,7 @@ func (s *Server) api(r *http.Request) (any, error) {
 			Battery     *string   `json:"battery"`
 			Off         *[]string `json:"off"`
 			HeliumDir   *string   `json:"heliumDir"`
+			Theme       *string   `json:"theme"`
 		}
 		if err := decode(r, &in); err != nil {
 			return nil, err
@@ -446,6 +497,16 @@ func (s *Server) api(r *http.Request) (any, error) {
 				return nil, errors.New("Keep at least one item on. To stop all sync, use Leave this sync.")
 			}
 			cfg.Off = off
+		}
+		if in.Theme != nil {
+			switch *in.Theme {
+			case "light":
+				cfg.Theme = ""
+			case "dark":
+				cfg.Theme = "dark"
+			default:
+				return nil, errors.New("unknown theme")
+			}
 		}
 		if in.HeliumDir != nil {
 			if cfg.Connected() && cfg.SetupDone {

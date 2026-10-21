@@ -19,6 +19,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 	"github.com/imrishabhchauhan/helium-syncer/internal/tray"
 	"github.com/imrishabhchauhan/helium-syncer/internal/ui"
+	"github.com/imrishabhchauhan/helium-syncer/internal/window"
 )
 
 func main() {
@@ -50,8 +51,10 @@ func main() {
 			logger.Printf("open window requested: %s", s.URL())
 			return
 		}
-		if err := agent.OpenBrowser(s.URL()); err != nil {
-			logger.Printf("cannot open the window: %v", err)
+		// Its own window, never a browser tab: the browser may be Helium.
+		if err := window.Open(s.URL(), app.Dir()); err != nil {
+			logger.Printf("cannot open the app window (%v); opening the browser", err)
+			agent.OpenBrowser(s.URL())
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -83,6 +86,7 @@ func main() {
 					time.Sleep(time.Second)
 				}
 			}
+			window.Close()
 			cancel()
 			if lock != nil {
 				lock.Close()

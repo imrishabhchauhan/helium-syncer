@@ -92,16 +92,39 @@ func TestSettingsAreChecked(t *testing.T) {
 		`{"personName":"Priya"}`:                           200,
 		`{"personName":"` + strings.Repeat("a", 41) + `"}`: 400,
 		`{"heliumDir":"C:/no/such/folder"}`:                400,
+		`{"theme":"dark"}`:                                 200,
+		`{"theme":"pink"}`:                                 400,
 	} {
 		if got := post(body); got != want {
 			t.Errorf("%s: got %d, want %d", body, got, want)
 		}
 	}
 	cfg, _ := app.Load()
-	if cfg.Battery != "plugged" || len(cfg.Off) != 1 || cfg.Off[0] != "history" || cfg.PersonName != "Priya" {
+	if cfg.Theme != "dark" || cfg.Battery != "plugged" || len(cfg.Off) != 1 || cfg.Off[0] != "history" || cfg.PersonName != "Priya" {
 		t.Fatalf("saved settings: %+v", cfg)
 	}
 	if !strings.HasPrefix(cfg.DeviceName, "Priya") && cfg.DeviceName != "" {
 		t.Errorf("the computer name should follow the person's name before joining: %q", cfg.DeviceName)
+	}
+}
+
+func TestOpenOnlyAllowedLinks(t *testing.T) {
+	t.Setenv("HELIUM_SYNCER_HOME", t.TempDir())
+	s := &Server{}
+	if _, err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"https://evil.example/", "https://helium.computer.evil.example/", "file:///C:/Windows/System32/calc.exe", "https://github.com/someone-else"} {
+		req, _ := http.NewRequest("POST", "http://"+s.addr+"/api/open", strings.NewReader(`{"url":"`+u+`"}`))
+		req.Header.Set("X-Key", s.key)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 400 {
+			t.Errorf("%s: got %d, want 400 (not allowed)", u, res.StatusCode)
+		}
 	}
 }

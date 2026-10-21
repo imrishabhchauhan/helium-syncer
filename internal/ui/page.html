@@ -3,134 +3,117 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="light dark">
 <title>Helium Syncer</title>
 <style>
 :root {
-  --bg: #F7F7F8; --surface: #FFFFFF; --surface-2: #F2F2F4; --text: #18181B; --text-2: #52525B; --text-3: #6B6B74;
-  --border: #E4E4E7; --control: #8A8A93; --accent: #1560EF; --on-accent: #FFFFFF; --accent-soft: rgba(21, 96, 239, .1);
+  --bg: #F5F5F7; --surface: #FFFFFF; --surface-2: #F0F0F3; --text: #1D1D1F; --text-2: #55555C; --text-3: #6E6E76;
+  --border: #E3E3E8; --control: #8A8A92; --accent: #1560EF; --on-accent: #FFFFFF; --accent-soft: rgba(21, 96, 239, .12);
   --ok: #1E7F45; --warn: #A15C00; --danger: #B42318;
-  --shadow: 0 1px 2px rgba(24, 24, 27, .05);
-  --win-shadow: 0 0 0 1px rgba(24, 24, 27, .06), 0 2px 4px rgba(24, 24, 27, .06), 0 16px 40px rgba(24, 24, 27, .14);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04);
+  --win-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 4px 10px rgba(0, 0, 0, .06), 0 18px 40px rgba(0, 0, 0, .12);
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #0F0F11; --surface: #18181B; --surface-2: #1F1F23; --text: #F4F4F5; --text-2: #B4B4BC; --text-3: #9A9AA3;
-  --border: #2B2B31; --control: #7C7C86; --accent: #2E6BEF; --on-accent: #FFFFFF; --accent-soft: rgba(80, 140, 255, .16);
-  --ok: #4CC27B; --warn: #F0B44C; --danger: #FF8A80;
-  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
-  --win-shadow: 0 0 0 1px rgba(255, 255, 255, .07), 0 2px 4px rgba(0, 0, 0, .3), 0 16px 40px rgba(0, 0, 0, .45);
+  --bg: #1B1B1E; --surface: #242428; --surface-2: #2C2C31; --text: #F2F2F4; --text-2: #BDBDC4; --text-3: #9C9CA5;
+  --border: #36363C; --control: #85858F; --accent: #2F6BEF; --on-accent: #FFFFFF; --accent-soft: rgba(90, 145, 255, .2);
+  --ok: #52C47F; --warn: #F0B44C; --danger: #FF8A80;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  --win-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 4px 10px rgba(0, 0, 0, .3), 0 18px 40px rgba(0, 0, 0, .45);
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
 h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.015em; text-wrap: balance; }
-h1 { font-size: 24px; line-height: 1.25; } h2 { font-size: 17px; line-height: 1.35; } h3 { font-size: 15px; line-height: 1.4; }
+h1 { font-size: 26px; line-height: 1.2; } h2 { font-size: 17px; } h3 { font-size: 15px; font-weight: 500; }
 p { margin: 0; text-wrap: pretty; }
 .t2 { color: var(--text-2); } .t3 { color: var(--text-3); } .sm { font-size: 13px; }
-a { color: var(--accent); text-underline-offset: 2px; }
-.wrap { max-width: 680px; margin: 0 auto; padding: 20px 16px 56px; }
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
-.logo { width: 26px; height: 26px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; flex: none; }
-.logo svg { width: 15px; height: 15px; stroke: #fff; stroke-width: 2.2; }
-.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
-.pad { padding: 24px; }
-.stack > * + * { margin-top: 10px; } .gap > * + * { margin-top: 22px; }
-.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-.end { justify-content: flex-end; } .between { justify-content: space-between; }
-button, .btn { font: 500 14px var(--font); min-height: 40px; padding: 0 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent;
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px; text-decoration: none; color: inherit; background: none;
-  transition: background-color .15s, border-color .15s, transform .1s; }
-button:active:not(:disabled), .btn:active { transform: scale(.97); }
-.primary { background: var(--accent); color: var(--on-accent); }
+a { color: var(--accent); }
+.wrap { max-width: 900px; margin: 0 auto; padding: 18px 28px 32px; }
+header { display: flex; align-items: center; justify-content: space-between; height: 40px; margin-bottom: 18px; }
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; }
+.logo { width: 24px; height: 24px; border-radius: 7px; background: var(--accent); display: grid; place-items: center; }
+.logo svg { width: 14px; height: 14px; stroke: #fff; stroke-width: 2.2; }
+.progress { height: 3px; border-radius: 3px; background: var(--border); overflow: hidden; margin: -6px 0 26px; }
+.progress i { display: block; height: 100%; background: var(--accent); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
+.hide { display: none !important; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Layouts: one narrow column, or text + real Helium picture side by side */
+.single { max-width: 460px; }
+.home { max-width: 620px; margin: 0 auto; }
+.split { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 40px; align-items: start; }
+.split .pic { position: sticky; top: 18px; }
+.gap > * + * { margin-top: 20px; } .gap-sm > * + * { margin-top: 8px; }
+.actions { display: flex; gap: 10px; align-items: center; justify-content: space-between; margin-top: 28px; }
+.actions .right { display: flex; gap: 10px; margin-left: auto; }
+
+button, .btn { font: 500 14px var(--font); min-height: 38px; padding: 0 16px; border-radius: 9px; cursor: pointer; border: 1px solid transparent;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; color: inherit; background: none; transition: background-color .15s, border-color .15s, transform .1s; }
+button:active:not(:disabled) { transform: scale(.97); }
+.primary { background: var(--accent); color: var(--on-accent); min-width: 112px; }
 .primary:hover:not(:disabled) { filter: brightness(1.08); }
 .secondary { background: var(--surface); border-color: var(--border); }
 .secondary:hover:not(:disabled) { border-color: var(--control); }
-.quiet { color: var(--text-2); padding: 0 8px; }
-.quiet:hover { color: var(--text); }
-.danger { color: var(--danger); border-color: var(--border); background: var(--surface); }
-.danger:hover { border-color: var(--danger); }
+.quiet { color: var(--text-2); padding: 0 10px; margin-left: -10px; }
+.quiet:hover { color: var(--text); background: var(--surface-2); }
+.danger { color: var(--danger); background: var(--surface); border-color: var(--border); }
 button:disabled { opacity: .45; cursor: not-allowed; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 h1:focus, h2:focus { outline: none; }
-svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; flex: none; }
-.ic { width: 18px; height: 18px; color: var(--text-3); }
-input[type=text] { width: 100%; height: 44px; border-radius: 9px; border: 1px solid var(--control); background: var(--surface); color: var(--text); padding: 0 13px; font: 15px var(--font); }
+svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.ic { width: 16px; height: 16px; }
+
+input[type=text] { width: 100%; height: 42px; border-radius: 9px; border: 1px solid var(--control); background: var(--surface); color: var(--text); padding: 0 12px; font: 15px var(--font); }
 input[type=text]:focus { border-color: var(--accent); }
 input[aria-invalid="true"] { border-color: var(--danger); }
 input::placeholder { color: var(--text-3); }
 input.code { font-family: var(--mono); letter-spacing: .04em; text-transform: uppercase; font-size: 14px; }
-label.field { display: block; font-weight: 500; font-size: 14px; margin-bottom: 7px; }
-.hint { font-size: 13px; color: var(--text-3); margin-top: 7px; min-height: 1px; }
-.err { border: 1px solid var(--danger); color: var(--danger); background: var(--surface); border-radius: 10px; padding: 11px 14px; margin-bottom: 16px; font-size: 14px; }
-.hide { display: none !important; }
-.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.divide > * + * { border-top: 1px solid var(--border); }
+label.field { display: block; font-weight: 500; font-size: 13px; color: var(--text-2); margin-bottom: 6px; }
+.hint { font-size: 13px; color: var(--text-3); margin-top: 6px; min-height: 19px; }
+.hint.bad { color: var(--danger); }
+.err { border: 1px solid var(--danger); color: var(--danger); border-radius: 10px; padding: 10px 14px; margin-bottom: 18px; font-size: 14px; }
 
-/* Progress */
-.progress { display: flex; align-items: center; gap: 14px; margin: -8px 0 18px; }
-.progress .bar { flex: 1; height: 3px; border-radius: 3px; background: var(--border); overflow: hidden; }
-.progress .bar i { display: block; height: 100%; background: var(--accent); transition: width .4s cubic-bezier(.2, .8, .2, 1); }
-.progress span { font-size: 12px; color: var(--text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
-
-/* Real Helium windows */
-.stage { position: relative; background: var(--surface-2); border-radius: 12px; overflow: hidden; }
-.shot { display: block; width: 100%; height: auto; border-radius: 9px; box-shadow: var(--win-shadow); background: var(--surface); }
+/* Real Helium pictures */
+.stage { position: relative; background: var(--surface-2); border-radius: 14px; padding: 22px; overflow: hidden; }
+.shot { display: block; width: 100%; height: auto; border-radius: 8px; box-shadow: var(--win-shadow); background: var(--surface); }
 .shot-wrap { position: relative; }
-.hero { height: 250px; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); }
-.hero .shot-wrap { position: absolute; width: 74%; }
-.hero .back { left: 5%; top: 26px; }
-.hero .front { right: 5%; top: 66px; }
-.mark { position: absolute; border: 2px solid var(--accent); border-radius: 8px; box-shadow: 0 0 0 4px var(--accent-soft); pointer-events: none; transition: all .35s cubic-bezier(.2, .8, .2, 1); }
-
-/* The how-it-works story */
-.story { display: grid; grid-template-columns: 1fr 44px 1fr; align-items: center; padding: 26px 18px 16px; }
-.story figure { margin: 0; }
-.story figcaption { text-align: center; font-size: 12px; color: var(--text-3); margin-top: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; }
-.story figcaption svg { width: 14px; height: 14px; }
-.closed { position: absolute; inset: 0; border-radius: 9px; background: color-mix(in srgb, var(--surface-2) 72%, transparent); backdrop-filter: blur(6px) saturate(.6);
-  display: grid; place-items: center; transition: opacity .5s ease; }
-.closed span { font-size: 12px; font-weight: 500; color: var(--text-2); background: var(--surface); border: 1px solid var(--border); padding: 4px 10px; border-radius: 99px; box-shadow: var(--shadow); }
+.mark { position: absolute; border: 2px solid var(--accent); border-radius: 7px; box-shadow: 0 0 0 4px var(--accent-soft); pointer-events: none; transition: left .35s, top .35s, width .35s, height .35s; transition-timing-function: cubic-bezier(.2, .8, .2, 1); }
+.pair { position: relative; aspect-ratio: 1.3; }
+.pair .shot-wrap { position: absolute; width: 78%; }
+.pair .one { left: 0; top: 0; } .pair .two { right: 0; bottom: 0; }
+.cap { position: absolute; left: 8px; bottom: 8px; z-index: 1; font-size: 12px; font-weight: 500; color: var(--text); background: var(--surface); border: 1px solid var(--border); padding: 2px 8px; border-radius: 99px; white-space: nowrap; }
+.closed { position: absolute; inset: 0; border-radius: 8px; background: color-mix(in srgb, var(--surface-2) 70%, transparent); backdrop-filter: blur(5px) saturate(.5);
+  display: grid; place-items: center; transition: opacity .45s ease; }
+.closed span { font-size: 12px; font-weight: 500; color: var(--text-2); background: var(--surface); border: 1px solid var(--border); padding: 3px 10px; border-radius: 99px; }
 .closed.off { opacity: 0; }
-.link-line { position: relative; height: 100%; }
-.link-line::before { content: ""; position: absolute; left: 4px; right: 4px; top: 50%; border-top: 1px dashed var(--control); }
-.token { position: absolute; top: 50%; left: 50%; width: 26px; height: 26px; margin: -13px 0 0 -13px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; opacity: 0; }
-.token svg { width: 13px; height: 13px; stroke-width: 2.2; }
-.story[data-s="2"] .token { animation: carry 2.2s cubic-bezier(.45, 0, .2, 1) .4s infinite; }
-@keyframes carry { 0% { opacity: 0; transform: translateX(-60px); } 15% { opacity: 1; } 85% { opacity: 1; } 100% { opacity: 0; transform: translateX(60px); } }
-.caption { display: flex; gap: 12px; align-items: baseline; min-height: 52px; }
-.caption .n { font-size: 13px; font-weight: 600; color: var(--accent); font-variant-numeric: tabular-nums; flex: none; }
-.caption p { font-size: 16px; }
-.fade { animation: fade .4s ease; }
-@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-.steps-nav { display: flex; gap: 4px; }
-.steps-nav button { min-height: 32px; min-width: 32px; padding: 0 10px; font-size: 13px; color: var(--text-3); border-radius: 8px; }
-.steps-nav button[aria-current="true"] { color: var(--text); background: var(--surface-2); }
 
-/* Lists and rows */
-.item { display: flex; align-items: center; gap: 14px; padding: 14px 0; }
-.item:first-child { padding-top: 0; } .item:last-child { padding-bottom: 0; }
-.grow { flex: 1; min-width: 0; }
-.item p { font-size: 13px; color: var(--text-2); }
-.fact { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; color: var(--text-2); }
-.fact b { color: var(--text); font-weight: 500; }
-.option { display: flex; align-items: flex-start; gap: 14px; width: 100%; text-align: left; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); min-height: 0; font-weight: 400; }
+/* Steps of the example */
+.steps { list-style: none; margin: 0; padding: 0; }
+.steps li { margin: 0 -12px; }
+.steps .step { display: flex; gap: 12px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; cursor: pointer; color: var(--text-2); font: inherit; min-height: 0; justify-content: flex-start; align-items: flex-start; transition: background-color .2s, color .2s; }
+.steps .step .n { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--control); display: grid; place-items: center; font-size: 12px; font-variant-numeric: tabular-nums; flex: none; margin-top: 1px; }
+.steps .step[aria-current="step"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.steps .step[aria-current="step"] .n { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* Rows, options, switches */
+.list > * + * { border-top: 1px solid var(--border); }
+.item { display: flex; align-items: center; gap: 14px; padding: 11px 0; }
+.item .grow, .grow { flex: 1; min-width: 0; }
+.item p { font-size: 13px; color: var(--text-3); }
+.kind { cursor: pointer; border-radius: 10px; padding: 9px 12px; margin: 0 -12px; border-top: none !important; }
+.kind[aria-current="true"] { background: var(--surface); box-shadow: var(--shadow); }
+.option { display: flex; align-items: flex-start; justify-content: flex-start; gap: 12px; width: 100%; text-align: left; padding: 14px 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font-weight: 400; min-height: 0; }
 .option:hover { border-color: var(--control); }
 .option[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.option b { display: block; font-weight: 500; font-size: 15px; }
-.option .t2 { font-size: 13px; display: block; }
+.option b { display: block; font-weight: 500; }
+.option .t3 { font-size: 13px; display: block; }
 .option + .option { margin-top: 10px; }
 .radio { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--control); flex: none; margin-top: 2px; display: grid; place-items: center; }
 .option[aria-checked="true"] .radio { border-color: var(--accent); }
 .option[aria-checked="true"] .radio::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
-.tag { font-size: 12px; font-weight: 500; color: var(--accent); margin-left: 8px; }
-.kind { cursor: pointer; border-radius: 10px; padding: 12px !important; margin: 0 -12px; }
-.kind[aria-current="true"] { background: var(--surface-2); }
-
-/* Switch */
+.tag { font-size: 12px; font-weight: 500; color: var(--accent); margin-left: 6px; }
 .switch { position: relative; width: 40px; height: 24px; flex: none; }
 .switch input { opacity: 0; width: 100%; height: 100%; position: absolute; margin: 0; cursor: pointer; z-index: 1; }
 .switch span { position: absolute; inset: 0; border-radius: 24px; background: var(--control); transition: background .2s; pointer-events: none; }
@@ -138,64 +121,65 @@ label.field { display: block; font-weight: 500; font-size: 14px; margin-bottom: 
 .switch input:checked + span { background: var(--accent); }
 .switch input:checked + span::after { transform: translateX(16px); }
 .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.avatar { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 13px; background: var(--surface-2); color: var(--text-2); flex: none; }
 
-/* Code, checks, notes */
-.code-box { font: 500 19px var(--mono); letter-spacing: .05em; padding: 18px; border-radius: 10px; background: var(--surface-2); text-align: center; word-break: break-word; }
-.check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 14px; }
-.check input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
-.note { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--text-2); }
-.note b { color: var(--text); font-weight: 500; }
-.timeline { display: flex; gap: 3px; align-items: center; margin: 12px 0 4px; }
-.timeline i { flex: 1; height: 4px; border-radius: 2px; background: var(--border); }
-.timeline i.on { background: var(--accent); }
-.avatar { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-weight: 600; font-size: 13px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); flex: none; }
-
-/* Preview table */
-.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 28px; }
-.cols h3 { font-size: 13px; font-weight: 500; color: var(--text-3); margin-bottom: 4px; }
-.line { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+.code-box { font: 500 18px var(--mono); letter-spacing: .05em; padding: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); text-align: center; word-break: break-word; user-select: all; }
+.check { display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: 14px; }
+.check input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex: none; }
+.box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.cols h3 { font-size: 13px; color: var(--text-3); margin-bottom: 2px; }
+.line { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
 .line b { font-weight: 500; font-variant-numeric: tabular-nums; }
-.keys { display: inline-flex; gap: 6px; flex: none; }
-.key { display: inline-grid; place-items: center; min-width: 34px; height: 34px; padding: 0 8px; border-radius: 7px; border: 1px solid var(--border); border-bottom-width: 2px; background: var(--surface); font-size: 15px; font-weight: 500; }
+.key { display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 7px; border-radius: 7px; border: 1px solid var(--border); border-bottom-width: 2px; background: var(--surface); font-size: 14px; font-weight: 500; margin-right: 4px; }
 
 /* Home */
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px 22px; }
+.panel + .panel { margin-top: 14px; }
 .status { display: flex; gap: 12px; align-items: center; }
 .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .dot.ok { background: var(--ok); } .dot.busy { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; } .dot.wait { background: var(--control); } .dot.warn { background: var(--warn); }
 @keyframes pulse { 50% { opacity: .35; } }
-.stats { display: flex; gap: 32px; flex-wrap: wrap; }
-.stats div { font-size: 13px; color: var(--text-3); }
-.stats b { display: block; font-size: 20px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; }
-.badge { font-size: 12px; color: var(--text-3); border: 1px solid var(--border); padding: 1px 7px; border-radius: 99px; margin-left: 8px; font-weight: 400; vertical-align: 1px; }
-.section { font-size: 12px; font-weight: 500; color: var(--text-3); margin: 28px 0 8px; }
-.seg { display: inline-flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 9px; border: 1px solid var(--border); flex-wrap: wrap; }
-.seg button { min-height: 32px; font-size: 13px; padding: 0 12px; color: var(--text-2); border-radius: 7px; }
-.seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow); border-color: var(--control); }
-footer { margin-top: 30px; text-align: center; font-size: 12px; color: var(--text-3); }
-footer a { color: var(--text-3); }
-.view { animation: fade .3s ease; }
+.badge { font-size: 12px; color: var(--text-3); border: 1px solid var(--border); padding: 0 7px; border-radius: 99px; margin-left: 6px; font-weight: 400; }
+.section { font-size: 12px; font-weight: 500; color: var(--text-3); margin: 22px 0 2px; }
+.seg { display: inline-flex; gap: 2px; background: var(--surface-2); padding: 3px; border-radius: 9px; flex-wrap: wrap; }
+.seg button { min-height: 30px; font-size: 13px; padding: 0 12px; color: var(--text-2); border-radius: 7px; }
+.seg button[aria-checked="true"] { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--control); }
+.foot { margin-top: 18px; font-size: 12px; color: var(--text-3); text-align: center; }
+.foot .link { color: var(--text-3); text-decoration: underline; min-height: 0; padding: 0; font-size: 12px; font-weight: 400; }
+.modal { position: fixed; inset: 0; z-index: 10; background: rgba(0, 0, 0, .35); display: grid; place-items: center; padding: 16px; }
+.sheet { background: var(--surface); border-radius: 14px; padding: 22px; width: 100%; max-width: 420px; box-shadow: var(--win-shadow); }
+.sheet p { margin-top: 8px; }
+.destroy { background: var(--danger); color: #fff; }
+:root[data-theme="dark"] .destroy { background: #C9302C; }
+.view { animation: fade .25s ease; }
+@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .no-tx, .no-tx * { transition: none !important; }
-@media (max-width: 560px) {
-  .pad { padding: 18px; } h1 { font-size: 21px; }
-  .hero { height: 190px; } .story { grid-template-columns: 1fr 26px 1fr; padding: 18px 10px 12px; }
-  .row.end > button { flex: 1; }
+::-webkit-scrollbar { width: 10px; } ::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--control) 45%, transparent); border-radius: 10px; border: 3px solid var(--bg); }
+@media (max-width: 760px) {
+  .wrap { padding: 14px 16px 28px; }
+  .split { grid-template-columns: 1fr; gap: 24px; }
+  .split .pic { position: static; order: -1; }
+  h1 { font-size: 22px; } .cols { grid-template-columns: 1fr; }
 }
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation: none !important; transition: none !important; }
-}
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="brand"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-13.7 5.6M4 12a8 8 0 0 1 13.7-5.6"/><path d="M18 3v4h-4M6 21v-4h4"/></svg></span>Helium Syncer</div>
-    <button class="quiet" id="theme" style="min-height:36px;width:36px;padding:0"></button>
+    <button class="quiet" id="theme" style="margin:0;min-height:34px;width:34px;padding:0"></button>
   </header>
+  <div class="progress hide" id="progress" aria-hidden="true"><i id="progress-bar"></i></div>
   <div id="error" class="err hide" role="alert"></div>
-  <div id="progress" class="progress hide" aria-hidden="true"><div class="bar"><i id="progress-bar"></i></div><span id="progress-text"></span></div>
   <main id="main"></main>
   <p id="live" class="sr" aria-live="polite"></p>
-  <footer>Helium Syncer <span id="ver"></span> · Free and open source · Not related to the Helium browser team · <a href="https://github.com/imrishabhchauhan/helium-syncer" target="_blank" rel="noopener">GitHub</a></footer>
+</div>
+<div id="ask" class="modal hide" role="dialog" aria-modal="true" aria-labelledby="ask-title" aria-describedby="ask-body">
+  <div class="sheet"><h2 id="ask-title"></h2><p id="ask-body" class="t2"></p>
+    <div class="actions"><span></span><div class="right"><button class="secondary" id="ask-no">Cancel</button><button class="primary" id="ask-yes"></button></div></div></div>
 </div>
 
 <script>
@@ -212,72 +196,73 @@ async function api(path, body) {
       headers: { "X-Key": key, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-  } catch {
-    throw new Error("Helium Syncer is not open. Open Helium Syncer. Then reload this page.");
-  }
-  if (res.status === 403) throw new Error("This page link is old. Open Helium Syncer again. It opens a new page.");
+  } catch { throw new Error("Helium Syncer is not open. Open Helium Syncer again."); }
+  if (res.status === 403) throw new Error("This window is old. Open Helium Syncer again.");
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "This did not work. Try again. If it does not work again, close and open Helium Syncer.");
+  if (!res.ok) throw new Error(data.error || "This did not work. Try again.");
   return data;
 }
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-function showError(e) { $("error").textContent = e.message || String(e); $("error").classList.remove("hide"); $("error").scrollIntoView({ block: "nearest" }); }
-function hideError() { $("error").classList.add("hide"); }
+function showError(e) { $("error").textContent = e.message || String(e); $("error").classList.remove("hide"); }
+const hideError = () => $("error").classList.add("hide");
 async function guard(btn, fn) { const t = btn.innerHTML; btn.disabled = true; hideError(); try { await fn(); } catch (e) { showError(e); } finally { if (btn.isConnected) { btn.disabled = false; btn.innerHTML = t; } } }
 const say = (t) => ($("live").textContent = t);
+// Our own question box: app windows (WebKit on Mac) do not show confirm().
+function ask(title, body, verb, risky) {
+  return new Promise((resolve) => {
+    const box = $("ask"), opener = document.activeElement;
+    $("ask-title").textContent = title; $("ask-body").textContent = body; $("ask-yes").textContent = verb; $("ask-yes").className = risky ? "primary destroy" : "primary";
+    box.classList.remove("hide"); $("ask-no").focus();
+    const done = (v) => { box.classList.add("hide"); document.removeEventListener("keydown", key); opener && opener.focus && opener.focus(); resolve(v); };
+    const key = (e) => { if (e.key === "Escape") done(false); if (e.key === "Tab") { e.preventDefault(); (document.activeElement === $("ask-no") ? $("ask-yes") : $("ask-no")).focus(); } };
+    document.addEventListener("keydown", key);
+    $("ask-no").onclick = () => done(false); $("ask-yes").onclick = () => done(true);
+    box.onclick = (e) => { if (e.target === box) done(false); };
+  });
+}
+// App windows cannot open links: the app opens them in the browser.
+const openLink = (url) => api("open", { url }).catch(showError);
 
-/* Icons: one line style, one neutral colour. */
 const I = {
-  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V7.5a3.5 3.5 0 0 1 7 0v3"/>',
-  shield: '<path d="M12 3 5 6v5.5c0 4.3 3 8 7 9.5 4-1.5 7-5.2 7-9.5V6l-7-3Z"/>', pause: '<path d="M9 6v12M15 6v12"/>', play: '<path d="M8 5.5v13l10.5-6.5L8 5.5Z"/>',
+  check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', back: '<path d="M15 6l-6 6 6 6"/>', laptop: '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2.5 12h2M19.5 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>', laptop: '<rect x="4" y="5" width="16" height="11" rx="1.5"/><path d="M2 19h20"/>',
-  key: '<circle cx="8" cy="15" r="4"/><path d="m11 12 8-8M16 7l2 2M14 9l1.5 1.5"/>', plus: '<path d="M12 5v14M5 12h14"/>',
-  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
-  back: '<path d="M15 6l-6 6 6 6"/>', power: '<path d="M12 3v8M7 6a7 7 0 1 0 10 0"/>',
+  moon: '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"/>', copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
+  pause: '<path d="M9 6v12M15 6v12"/>', play: '<path d="M8 5.5v13l10.5-6.5L8 5.5Z"/>', plus: '<path d="M12 5v14M5 12h14"/>',
 };
-const svg = (n, cls = "ic") => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
+const svg = (n) => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${I[n]}</svg>`;
 
-/* Theme: follows the computer; the button changes it for this computer. */
-const media = matchMedia("(prefers-color-scheme: dark)");
-let theme = null; try { theme = localStorage.getItem("hs-theme"); } catch {}
+/* Theme: light first. The app keeps the choice. */
 const dark = () => document.documentElement.dataset.theme === "dark";
-function applyTheme() {
-  document.documentElement.dataset.theme = theme || (media.matches ? "dark" : "light");
+function applyTheme(t) {
+  const root = document.documentElement;
+  root.classList.add("no-tx");
+  root.dataset.theme = t === "dark" ? "dark" : "light";
   $("theme").innerHTML = svg(dark() ? "sun" : "moon");
   $("theme").setAttribute("aria-label", dark() ? "Use light mode" : "Use dark mode");
   document.querySelectorAll("img[data-shot]").forEach((img) => (img.src = shotURL(img.dataset.shot)));
+  void root.offsetWidth; requestAnimationFrame(() => root.classList.remove("no-tx"));
 }
-media.addEventListener("change", applyTheme);
-$("theme").onclick = () => {
-  const root = document.documentElement;
-  theme = dark() ? "light" : "dark";
-  root.classList.add("no-tx"); applyTheme(); void root.offsetWidth;
-  requestAnimationFrame(() => root.classList.remove("no-tx"));
-  try { localStorage.setItem("hs-theme", theme); } catch {}
-};
+applyTheme("light");
+$("theme").onclick = () => { const t = dark() ? "light" : "dark"; applyTheme(t); api("settings", { theme: t }).then((s) => (state = s)).catch(() => {}); };
 
-/* Real Helium pictures (captured from Helium: testing/lab/capture-helium.ps1). */
+/* Real Helium pictures: testing/lab/capture-helium.ps1 and capture-helium-mac.sh */
 const shotURL = (name) => `/img/${name}-${dark() ? "dark" : "light"}.webp`;
-const shot = (name, alt) => `<img class="shot" data-shot="${name}" src="${shotURL(name)}" width="1300" height="770" alt="${esc(alt)}" decoding="async">`;
-// Pictures per system. Each item's place, in pixels of the capture.
+const shot = (name, alt = "") => `<img class="shot" data-shot="${name}" src="${shotURL(name)}" width="1300" height="770" alt="${esc(alt)}" decoding="async">`;
 const GEOM = {
-  win: { w: 1736, h: 1028, tabs: [0, 0, 1390, 70], bookmarks: [0, 128, 1290, 192], history: [56, 355, 1650, 872], settings: [172, 437, 1534, 1022], extensions: [452, 486, 1254, 1016] },
-  mac: { w: 1760, h: 1040, tabs: [0, 0, 1690, 68], bookmarks: [0, 126, 1390, 190], history: [54, 352, 1706, 870], settings: [198, 434, 1562, 1035], extensions: [480, 483, 1282, 806] },
+  win: { w: 1736, h: 1028, tabs: [0, 0, 1390, 70], bookmarks: [0, 128, 1290, 192], history: [56, 355, 1650, 872], settings: [172, 437, 1534, 1022], extensions: [452, 486, 1254, 1016], profile: [1610, 72, 1660, 124] },
+  mac: { w: 1760, h: 1040, tabs: [0, 0, 1690, 68], bookmarks: [0, 126, 1390, 190], history: [54, 352, 1706, 870], settings: [198, 434, 1562, 1035], extensions: [480, 483, 1282, 806], profile: [1634, 70, 1686, 122] },
 };
+const pairPic = () => `<div class="pic" aria-hidden="true"><div class="stage"><div class="pair"><div class="shot-wrap one">${shot(`window-${there()}`)}</div><div class="shot-wrap two">${shot(`window-${here()}`)}</div></div></div></div>`;
+const markPic = (k) => { const g = GEOM[here()]; return `<div class="pic" aria-hidden="true"><div class="stage"><div class="shot-wrap">${shot(`window-${here()}`)}<span class="mark" style="${markStyle(g, g[k])}"></span></div></div></div>`; };
 const PAGE = { tabs: "window", bookmarks: "window", history: "history", settings: "settings", extensions: "extensions" };
-const sys = (mac) => (mac ? "mac" : "win");
-// The Mac extensions picture is not ready yet: Mac uses the Windows one.
-function picture(kind, mac) {
-  const tag = kind === "extensions" && mac && !GEOM.mac.extensions ? "win" : sys(mac);
-  return { name: `${PAGE[kind]}-${tag}`, g: GEOM[tag], box: GEOM[tag][kind] };
-}
+const isMac = () => state.os === "darwin";
+const here = () => (isMac() ? "mac" : "win"), there = () => (isMac() ? "win" : "mac");
 const markStyle = (g, [x0, y0, x1, y1]) => `left:${(x0 / g.w) * 100}%;top:${(y0 / g.h) * 100}%;width:${((x1 - x0) / g.w) * 100}%;height:${((y1 - y0) / g.h) * 100}%`;
 
 /* Words */
 const firstName = () => (state?.personName || "").trim().split(/\s+/)[0] || "";
-const thisKind = () => state.os === "darwin" ? (state.hasBattery ? "MacBook" : "Mac") : state.os === "windows" ? (state.hasBattery ? "Windows laptop" : "Windows PC") : "computer";
-const otherKind = () => state.os === "darwin" ? "Windows computer" : "Mac";
+const thisKind = () => (isMac() ? (state.hasBattery ? "MacBook" : "Mac") : state.os === "windows" ? (state.hasBattery ? "Windows laptop" : "Windows PC") : "computer");
+const otherKind = () => (isMac() ? "Windows computer" : "Mac");
 function ago(ms) {
   if (!ms) return "never";
   const s = Math.max(0, (Date.now() - ms) / 1000);
@@ -287,145 +272,124 @@ function ago(ms) {
   return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 }
 const KIND = {
-  bookmarks: { title: "Bookmarks", desc: "The bookmarks bar and all bookmark folders." },
-  history: { title: "History", desc: "Pages that you opened in the last 85 days." },
-  tabs: { title: "Open tabs", desc: "Open tabs, pinned tabs and tab groups." },
-  settings: { title: "Settings", desc: "Start page, toolbar, theme, fonts, languages and privacy." },
-  extensions: { title: "Extensions", desc: "Extensions and their settings." },
+  bookmarks: ["Bookmarks", "Bar and folders"], history: ["History", "The last 85 days"], tabs: ["Open tabs", "With pinned tabs and tab groups"],
+  settings: ["Settings", "Theme, toolbar, start page and more"], extensions: ["Extensions", "With their settings"],
 };
 const OPS = { bookmark: "bookmarks", visit: "history", title: "history", tab: "tabs", group: "tabs", setting: "settings", ext: "extensions", "ext-data": "extensions" };
 
-/* Progress */
-const STEPS = () => (flow.join ? ["how", "choose", "join", "what", "profiles", "battery", "preview"] : ["how", "choose", "code", "what", "profiles", "battery", "preview"]).filter((s) => s !== "battery" || state.hasBattery);
-function progress(name) {
-  const list = STEPS(), i = state.setupDone ? -1 : list.indexOf(name);
-  $("progress").classList.toggle("hide", i < 0);
-  if (i >= 0) { $("progress-bar").style.width = ((i + 1) / list.length) * 100 + "%"; $("progress-text").textContent = `Step ${i + 1} of ${list.length}`; }
-}
+/* Frame */
+const ORDER = () => ["name", "how", "choose", flow.join ? "join" : "code", "what", "profiles", ...(state.hasBattery ? ["battery"] : []), "preview"];
 function render(name, html, after) {
   clearInterval(storyTimer);
-  view = name; hideError(); progress(name);
+  view = name; hideError();
+  const list = ORDER(), i = state.setupDone ? -1 : list.indexOf(name);
+  $("progress").classList.toggle("hide", i < 0);
+  if (i >= 0) $("progress-bar").style.width = ((i + 1) / list.length) * 100 + "%";
   $("main").innerHTML = `<section class="view">${html}</section>`;
   scrollTo(0, 0);
   const h = $("main").querySelector("h1, h2"); if (h) { h.tabIndex = -1; h.focus({ preventScroll: true }); }
-  if (after) after();
+  after && after();
 }
-const backBtn = (id, label = "Back") => `<button class="quiet" id="${id}">${svg("back")}${label}</button>`;
+const back = (id = "back") => `<button class="quiet" id="${id}">${svg("back")}Back</button>`;
+const actions = (left, right) => `<div class="actions">${left || "<span></span>"}<div class="right">${right}</div></div>`;
+const go = (s) => { step = s; route(); };
 
 /* 1. Name */
-function vHello() {
-  const mac = state.os === "darwin";
-  render("hello", `<div class="panel">
-    <div class="stage hero" aria-hidden="true" style="border-radius:13px 13px 0 0">
-      <div class="shot-wrap back">${shot(mac ? "window-win" : "window-mac", "")}</div><div class="shot-wrap front">${shot(mac ? "window-mac" : "window-win", "")}</div>
+function vName() {
+  render("name", `<div class="split">
+    <div class="gap">
+      <h1>What is your name?</h1>
+      <div><label class="field" for="person">Your name</label><input type="text" id="person" maxlength="40" autocomplete="given-name" placeholder="Enter your name" aria-describedby="person-hint" value="${esc(state.personName)}"><p class="hint" id="person-hint"></p></div>
+      ${actions("", '<button class="primary" id="next">Continue</button>')}
     </div>
-    <div class="pad gap">
-      <div class="stack"><h1>What is your name?</h1><p class="t2">Helium Syncer keeps Helium the same on your Mac and your Windows computer. Your name stays on this computer.</p></div>
-      <div><label class="field" for="person">Your name</label><input type="text" id="person" maxlength="40" autocomplete="given-name" placeholder="Enter your name" aria-describedby="person-hint" value="${esc(state.personName)}"><p class="hint" id="person-hint" aria-live="polite"></p></div>
-      <div class="row end"><button class="primary" id="hello-go">Continue</button></div>
-    </div>
+    <div class="pic" aria-hidden="true"><div class="stage"><div class="pair">
+      <div class="shot-wrap one">${shot(`window-${there()}`)}</div><div class="shot-wrap two">${shot(`window-${here()}`)}</div>
+    </div></div></div>
   </div>`, () => {
-    const inp = $("person"), go = $("hello-go");
-    inp.addEventListener("input", () => { inp.removeAttribute("aria-invalid"); $("person-hint").textContent = ""; });
-    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
+    const inp = $("person"), hint = $("person-hint");
+    const show = () => { const n = inp.value.trim(); hint.className = "hint"; hint.textContent = n ? `Your other computers show “${n}’s ${state.deviceKind}”.` : "Your other computers show your name."; };
+    show();
+    inp.addEventListener("input", () => { inp.removeAttribute("aria-invalid"); show(); });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") $("next").click(); });
     setTimeout(() => inp.focus(), 50);
-    go.onclick = () => {
-      if (!inp.value.trim()) { inp.setAttribute("aria-invalid", "true"); $("person-hint").textContent = "Type your name."; inp.focus(); return; }
-      guard(go, async () => { state = await api("settings", { personName: inp.value.trim() }); step = "how"; route(); });
+    $("next").onclick = (e) => {
+      if (!inp.value.trim()) { inp.setAttribute("aria-invalid", "true"); hint.className = "hint bad"; hint.textContent = "Type your name."; inp.focus(); return; }
+      guard(e.currentTarget, async () => { state = await api("settings", { personName: inp.value.trim() }); go("how"); });
     };
   });
 }
 
 /* 2. How it works */
-const STORY = () => [
-  `You use Helium on your ${thisKind()}. You open <b>wikipedia.org</b>.`,
-  `You close Helium. Helium Syncer locks your changes with your sync code and sends them.`,
-  `Later, you open Helium on your ${otherKind()}. <b>wikipedia.org</b> is open there too.`,
-];
+const STORY = () => [`You use Helium on this ${thisKind()}.`, "Close Helium. Helium Syncer sends your changes.", `Open Helium on your ${otherKind()}. Your changes are there.`];
 let scene = 1, playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
 function setScene(n) {
   scene = n;
-  const st = $("story"); if (!st) return;
-  st.dataset.s = String(n);
-  $("left-closed").classList.toggle("off", n === 1);
-  $("right-closed").classList.toggle("off", n === 3);
-  $("story-n").textContent = n;
-  const p = $("story-text"); p.innerHTML = STORY()[n - 1]; p.classList.remove("fade"); void p.offsetWidth; p.classList.add("fade");
-  document.querySelectorAll("[data-scene]").forEach((b) => b.setAttribute("aria-current", String(+b.dataset.scene === n)));
+  if (!$("c-here")) return;
+  $("c-here").classList.toggle("off", n === 1);
+  $("c-there").classList.toggle("off", n === 3);
+  document.querySelectorAll(".steps .step").forEach((b) => (+b.dataset.n === n ? b.setAttribute("aria-current", "step") : b.removeAttribute("aria-current")));
 }
 function play(on) {
   playing = on; clearInterval(storyTimer);
-  const b = $("story-play"); if (!b) return;
-  b.innerHTML = on ? svg("pause") + "Pause" : svg("play") + "Play";
-  b.setAttribute("aria-label", on ? "Pause the example" : "Play the example");
-  document.querySelector(".caption")?.setAttribute("aria-live", on ? "off" : "polite");
-  if (on) storyTimer = setInterval(() => setScene((scene % 3) + 1), 4500);
+  const b = $("play"); if (!b) return;
+  b.innerHTML = svg(on ? "pause" : "play"); b.setAttribute("aria-label", on ? "Pause" : "Play");
+  if (on) storyTimer = setInterval(() => setScene((scene % 3) + 1), 3500);
 }
 function vHow() {
-  const name = firstName(), mac = state.os === "darwin";
-  render("how", `<div class="panel">
-    <div class="stage" style="border-radius:13px 13px 0 0"><div class="story" id="story" data-s="1">
-      <figure><div class="shot-wrap">${shot(mac ? "window-mac" : "window-win", "Helium on this computer")}<div class="closed" id="left-closed"><span>Helium is closed</span></div></div><figcaption>${svg("laptop")}This ${esc(thisKind())}</figcaption></figure>
-      <div class="link-line" aria-hidden="true"><span class="token">${svg("lock")}</span></div>
-      <figure><div class="shot-wrap">${shot(mac ? "window-win" : "window-mac", "Helium on your other computer")}<div class="closed" id="right-closed"><span>Helium is closed</span></div></div><figcaption>${svg("laptop")}Your ${esc(otherKind())}</figcaption></figure>
-    </div></div>
-    <div class="pad gap">
-      <h1>${name ? esc(name) + ", this" : "This"} is how it works</h1>
-      <div class="caption" aria-live="polite"><span class="n" id="story-n">1</span><p id="story-text"></p></div>
-      <div class="row between"><div class="steps-nav" role="group" aria-label="Steps">${[1, 2, 3].map((n) => `<button data-scene="${n}" aria-label="Step ${n}">${n}</button>`).join("")}</div><button class="secondary" id="story-play"></button></div>
-      <div class="divide">
-        <div class="fact" style="padding:14px 0 12px">${svg("power")}<p><b>Only when Helium is closed.</b> Nothing changes while you use Helium.</p></div>
-        <div class="fact" style="padding:12px 0">${svg("lock")}<p><b>Locked on your computer.</b> Nobody else can read your data. We also cannot read it.</p></div>
-        <div class="fact" style="padding:12px 0 0">${svg("shield")}<p><b>Nothing is deleted.</b> Before a change, Helium Syncer makes a backup.</p></div>
-      </div>
-      <div class="row between">${backBtn("how-back")}<button class="primary" id="how-go">Continue</button></div>
+  const name = firstName();
+  render("how", `<div class="split">
+    <div class="gap">
+      <div class="row" style="display:flex;align-items:center;justify-content:space-between;gap:12px"><h1>${name ? `${esc(name)}, this is how it works` : "This is how it works"}</h1><button class="quiet" id="play" style="margin:0;min-width:34px;padding:0"></button></div>
+      <ol class="steps">${STORY().map((t, i) => `<li><button type="button" class="step" data-n="${i + 1}"><span class="n">${i + 1}</span><span>${t}</span></button></li>`).join("")}</ol>
+      ${actions(back(), '<button class="primary" id="next">Continue</button>')}
     </div>
+    <div class="pic" aria-hidden="true"><div class="stage"><div class="pair">
+      <div class="shot-wrap one">${shot(`window-${here()}`)}<div class="closed" id="c-here"><span>Helium is closed</span></div><span class="cap">This ${esc(thisKind())}</span></div>
+      <div class="shot-wrap two">${shot(`window-${there()}`)}<div class="closed" id="c-there"><span>Helium is closed</span></div><span class="cap">Your ${esc(otherKind())}</span></div>
+    </div></div></div>
   </div>`, () => {
     setScene(1); play(playing);
-    document.querySelectorAll("[data-scene]").forEach((b) => (b.onclick = () => { play(false); setScene(+b.dataset.scene); }));
-    $("story-play").onclick = () => play(!playing);
-    $("how-back").onclick = () => { step = flow.fromHome ? "" : "hello"; flow.fromHome = false; route(); };
-    $("how-go").onclick = () => { step = flow.fromHome ? "" : "choose"; flow.fromHome = false; route(); };
+    document.querySelectorAll(".steps .step").forEach((b) => (b.onclick = () => { play(false); setScene(+b.dataset.n); }));
+    $("play").onclick = () => play(!playing);
+    $("back").onclick = () => go(flow.fromHome ? "" : "name");
+    $("next").onclick = () => { const home = flow.fromHome; flow.fromHome = false; go(home ? "" : "choose"); };
   });
 }
 
 /* Helium not found */
 function vMissing() {
-  const where = state.os === "darwin" ? "~/Library/Application Support/net.imput.helium" : state.os === "windows" ? "%LOCALAPPDATA%\\imput\\Helium\\User Data" : "~/.config/net.imput.helium";
-  render("missing", `<div class="panel pad gap">
-    <div class="stack"><h1>Helium is not on this computer</h1><p class="t2">Helium Syncer syncs the Helium browser. Install Helium. Open Helium one time. Then come back to this page. This page checks again every few seconds.</p></div>
-    <div class="row"><a class="btn primary" href="https://helium.computer" target="_blank" rel="noopener">Get Helium</a><button class="secondary" id="miss-again">Check again</button></div>
-    <details><summary class="t2 sm" style="cursor:pointer">Is Helium in a different place?</summary>
-      <div style="margin-top:14px"><label class="field" for="hdir">Helium data folder</label><input type="text" id="hdir" spellcheck="false" placeholder="${esc(where)}"><p class="hint">Find the folder that contains the file “Local State”.</p><div class="row end" style="margin-top:12px"><button class="secondary" id="hdir-go">Use this folder</button></div></div>
+  const where = isMac() ? "~/Library/Application Support/net.imput.helium" : state.os === "windows" ? "%LOCALAPPDATA%\\imput\\Helium\\User Data" : "~/.config/net.imput.helium";
+  render("missing", `<div class="single gap">
+    <h1>Install Helium first</h1>
+    <p class="t2">Open Helium one time after you install it. This window then continues by itself.</p>
+    <div style="display:flex;gap:10px"><button class="primary" id="get-helium">Get Helium</button></div>
+    <details><summary class="t3 sm" style="cursor:pointer">Helium is in a different folder</summary>
+      <div class="gap-sm" style="margin-top:12px"><label class="field" for="hdir">Folder that contains “Local State”</label><input type="text" id="hdir" spellcheck="false" placeholder="${esc(where)}"><div style="display:flex;justify-content:flex-end"><button class="secondary" id="hdir-go">Use this folder</button></div></div>
     </details>
-  </div>`, () => {
-    $("miss-again").onclick = (e) => guard(e.currentTarget, refresh);
-    $("hdir-go").onclick = (e) => guard(e.currentTarget, async () => { state = await api("settings", { heliumDir: $("hdir").value }); route(); });
-  });
+  </div>`, () => { $("get-helium").onclick = () => openLink("https://helium.computer"); $("hdir-go").onclick = (e) => guard(e.currentTarget, async () => { state = await api("settings", { heliumDir: $("hdir").value }); route(); }); });
 }
 
 /* 3. First computer or join */
 function vChoose() {
-  render("choose", `<div class="panel pad gap">
+  render("choose", `<div class="split"><div class="gap">
     <h1>Is this your first computer with Helium Syncer?</h1>
-    <div role="radiogroup" aria-label="First computer">
-      <button class="option" role="radio" aria-checked="false" id="c-first"><span class="radio"></span><span><b>Yes, this is my first computer</b><span class="t2">You get a new sync code. You use it on your other computers.</span></span></button>
-      <button class="option" role="radio" aria-checked="false" id="c-join"><span class="radio"></span><span><b>No, I use it on a different computer</b><span class="t2">Type the sync code from your other computer.</span></span></button>
-    </div>
-    <div><label class="field" for="devname">Name of this computer</label><input type="text" id="devname" maxlength="60" value="${esc(state.deviceName)}"><p class="hint">Your other computers show this name.</p></div>
-    <div class="row between">${backBtn("choose-back")}<button class="primary" id="choose-go">Continue</button></div>
-  </div>`, () => {
+    <div role="radiogroup" aria-label="First computer" aria-describedby="pick-hint">
+      <button class="option" role="radio" aria-checked="false" id="c-first"><span class="radio"></span><span><b>Yes</b><span class="t3">You get a new sync code.</span></span></button>
+      <button class="option" role="radio" aria-checked="false" id="c-join"><span class="radio"></span><span><b>No, I use it on a different computer</b><span class="t3">You type the sync code from that computer.</span></span></button>
+    </div><p class="hint" id="pick-hint"></p>
+    ${actions(back(), '<button class="primary" id="next">Continue</button>')}
+  </div>${pairPic()}</div>`, () => {
     let pick = flow.join === true ? "join" : flow.join === false ? "first" : "";
-    const sel = (p) => { pick = p; $("c-first").setAttribute("aria-checked", String(p === "first")); $("c-join").setAttribute("aria-checked", String(p === "join")); };
+    const sel = (p) => { pick = p; $("pick-hint").textContent = ""; $("c-first").setAttribute("aria-checked", String(p === "first")); $("c-join").setAttribute("aria-checked", String(p === "join")); };
     sel(pick);
     $("c-first").onclick = () => sel("first"); $("c-join").onclick = () => sel("join");
-    $("choose-back").onclick = () => { step = "how"; route(); };
-    $("choose-go").onclick = (e) => {
-      if (!pick) { showError(new Error("Select one of the two options.")); return; }
-      flow.devname = $("devname").value;
-      if (pick === "join") { flow.join = true; step = "join"; route(); return; }
-      flow.join = false;
-      guard(e.currentTarget, async () => { state = await api("start", { name: flow.devname }); route(); });
+    $("c-first").ondblclick = $("c-join").ondblclick = () => $("next").click();
+    $("back").onclick = () => go("how");
+    $("next").onclick = (e) => {
+      if (!pick) { $("pick-hint").className = "hint bad"; $("pick-hint").textContent = "Select Yes or No."; $("c-first").focus(); return; }
+      flow.join = pick === "join";
+      if (flow.join) { go("join"); return; }
+      guard(e.currentTarget, async () => { state = await api("start", {}); go("code"); });
     };
   });
 }
@@ -433,150 +397,152 @@ function vChoose() {
 /* 4a. Join */
 const formatCode = (v) => v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 32).replace(/(.{4})(?=.)/g, "$1-");
 function vJoin() {
-  render("join", `<div class="panel pad gap">
-    <div class="stack"><h1>Type your sync code</h1><p class="t2">On your other computer, open Helium Syncer. Go to <b>Settings</b>. Select <b>Show</b> next to <b>Sync code</b>.</p></div>
-    <div class="stage" style="padding:18px" aria-hidden="true"><div class="panel" style="max-width:360px;margin:auto;padding:14px 16px">
-      <div class="item" style="padding:0"><div class="grow"><b style="font-weight:500;font-size:14px">Sync code</b><p style="font-family:var(--mono)">••••-••••-••••-••••</p></div><span class="btn secondary" style="min-height:32px;padding:0 12px;font-size:13px;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)">Show</span></div>
-    </div></div>
-    <div><label class="field" for="joincode">Sync code</label><input type="text" class="code" id="joincode" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" aria-describedby="code-count"><p class="hint" id="code-count" aria-live="polite">8 groups of 4 letters and numbers.</p></div>
-    <div class="row between">${backBtn("join-back")}<button class="primary" id="do-join">Join</button></div>
-  </div>`, () => {
-    const inp = $("joincode"), go = $("do-join"), count = () => inp.value.replace(/-/g, "").length;
-    inp.addEventListener("input", () => { inp.value = formatCode(inp.value); inp.removeAttribute("aria-invalid"); const n = count(); $("code-count").textContent = n === 32 ? "The code is complete." : `${n} of 32 letters and numbers.`; });
-    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") go.click(); });
+  render("join", `<div class="split"><div class="gap">
+    <h1>Type your sync code</h1>
+    <p class="t2">On your other computer: Helium Syncer → Settings → Sync code → Show.</p>
+    <div><label class="field" for="code">Sync code</label><input type="text" class="code" id="code" placeholder="XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" aria-describedby="code-hint"><p class="hint" id="code-hint"></p></div>
+    ${actions(back(), '<button class="primary" id="next">Join</button>')}
+  </div>${pairPic()}</div>`, () => {
+    const inp = $("code"), hint = $("code-hint"), count = () => inp.value.replace(/-/g, "").length;
+    inp.addEventListener("input", () => { inp.value = formatCode(inp.value); inp.removeAttribute("aria-invalid"); hint.className = "hint"; hint.textContent = count() === 32 ? "The code is complete." : ""; });
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") $("next").click(); });
     setTimeout(() => inp.focus(), 50);
-    $("join-back").onclick = () => { step = "choose"; route(); };
-    go.onclick = () => {
-      const n = count();
-      if (n !== 32) { inp.setAttribute("aria-invalid", "true"); $("code-count").textContent = `Type all 32 letters and numbers. You typed ${n}.`; inp.focus(); return; }
-      guard(go, async () => { go.textContent = "Joining…"; state = await api("join", { code: inp.value, name: flow.devname || state.deviceName }); step = "what"; route(); });
+    $("back").onclick = () => go("choose");
+    $("next").onclick = (e) => {
+      if (count() !== 32) { inp.setAttribute("aria-invalid", "true"); hint.className = "hint bad"; hint.textContent = `A sync code has 32 letters and numbers. You typed ${count()}.`; inp.focus(); return; }
+      guard(e.currentTarget, async () => { e.currentTarget.textContent = "Joining…"; state = await api("join", { code: inp.value }); go("what"); });
     };
   });
 }
 
 /* 4b. Save the code */
-function vCode() {
-  render("code", `<div class="panel pad gap">
-    <div class="stack"><h1>Save your sync code</h1><p class="t2">You need this code to add your other computers.</p></div>
-    <div class="code-box" id="freshcode">${esc(state.freshCode)}</div>
-    <div class="row"><button class="secondary" id="copy-code">${svg("copy")}Copy code</button></div>
-    <div class="stack">
-      <div class="note">${svg("lock")}<p><b>Keep it private.</b> A person with this code can join your sync.</p></div>
-      <div class="note">${svg("key")}<p><b>Nobody can get it back for you.</b> We also cannot. Save it in your password manager.</p></div>
-    </div>
-    <label class="check"><input type="checkbox" id="saved"><span>I saved my sync code in a safe place.</span></label>
-    <div class="row end"><button class="primary" id="code-done">Continue</button></div>
-  </div>`, () => {
-    $("copy-code").onclick = async (e) => { try { await navigator.clipboard.writeText(state.freshCode); e.currentTarget.innerHTML = svg("check") + "Copied"; say("The code is copied."); } catch { showError(new Error("Copy did not work. Select the code. Then copy the code.")); } };
-    $("code-done").onclick = (e) => {
-      if (!$("saved").checked) { showError(new Error("Save your sync code first. Then select the box.")); $("saved").focus(); return; }
-      guard(e.currentTarget, async () => { state = await api("code-saved", {}); step = "what"; route(); });
+async function vCode() {
+  let code = state.freshCode;
+  if (!code) { try { code = (await api("code")).code; } catch (e) { showError(e); } }
+  render("code", `<div class="split"><div class="gap">
+    <h1>Save your sync code</h1>
+    <p class="t2">You type it on your other computers. Keep it private. Nobody can get it back for you.</p>
+    <div class="code-box">${esc(code)}</div>
+    <div style="display:flex;gap:10px"><button class="secondary" id="copy">${svg("copy")}Copy</button></div>
+    <div><label class="check"><input type="checkbox" id="saved" aria-describedby="saved-hint" ${state.freshCode ? "" : "checked"}>I saved it in my password manager.</label><p class="hint" id="saved-hint"></p></div>
+    ${actions(back(), '<button class="primary" id="next">Continue</button>')}
+  </div>${pairPic()}</div>`, () => {
+    $("copy").onclick = (e) => guard(e.currentTarget, async () => { await api("copy-code", {}); e.currentTarget.innerHTML = svg("check") + "Copied"; say("Copied."); });
+    $("saved").onchange = () => ($("saved-hint").textContent = "");
+    $("back").onclick = async (e) => {
+      const b = e.currentTarget;
+      if (!(await ask("Get a new code?", "This code stops working. You get a new code when you continue.", "Get a new code"))) return;
+      guard(b, async () => { state = await api("disconnect", {}); go("choose"); });
+    };
+    $("next").onclick = (e) => {
+      if (!$("saved").checked) { $("saved-hint").className = "hint bad"; $("saved-hint").textContent = "Save the code. Then select the box."; $("saved").focus(); return; }
+      guard(e.currentTarget, async () => { if (state.freshCode) state = await api("code-saved", {}); go("what"); });
     };
   });
 }
 
-/* 5. What syncs: the real Helium window shows where each item is */
-function kindsHTML(prefix, off) {
-  return state.kinds.map((k) => `<div class="item kind" data-kind="${k}">
-    <div class="grow"><h3>${KIND[k].title}</h3><p>${KIND[k].desc}</p></div>
-    <label class="switch"><input type="checkbox" id="${prefix}-${k}" aria-label="Sync ${KIND[k].title.toLowerCase()}" ${off.includes(k) ? "" : "checked"}><span></span></label>
-  </div>`).join("");
+/* 5. What syncs: the real Helium window, side by side */
+function kindRows(prefix, off) {
+  return state.kinds.map((k) => `<div class="item kind" data-kind="${k}"><div class="grow"><h3>${KIND[k][0]}</h3><p>${KIND[k][1]}</p></div>
+    <label class="switch"><input type="checkbox" id="${prefix}-${k}" aria-label="Sync ${KIND[k][0].toLowerCase()}" ${off.includes(k) ? "" : "checked"}><span></span></label></div>`).join("");
 }
 const readOff = (prefix) => state.kinds.filter((k) => !$(`${prefix}-${k}`).checked);
 function wireKinds(prefix, onChange, onPick) {
   document.querySelectorAll(".kind").forEach((row) => {
     const k = row.dataset.kind, pick = () => onPick && onPick(k);
-    row.addEventListener("mouseenter", pick); row.addEventListener("focusin", pick);
-    row.addEventListener("click", (e) => { if (!e.target.closest(".switch")) pick(); });
+    row.addEventListener("mouseenter", pick); row.addEventListener("focusin", pick); row.addEventListener("click", pick);
     $(`${prefix}-${k}`).addEventListener("change", (e) => {
       const off = readOff(prefix);
       if (off.length === state.kinds.length) { e.target.checked = true; showError(new Error("Keep at least one item on.")); return; }
-      hideError(); pick(); onChange && onChange(off);
+      hideError(); onChange && onChange(off);
     });
   });
 }
 function vWhat() {
-  render("what", `<div class="panel">
-    <div class="stage" style="padding:20px 22px 22px;border-radius:13px 13px 0 0" aria-hidden="true"><div class="shot-wrap" id="what-shot">${shot(`window-${sys(state.os === "darwin")}`, "")}<span class="mark" id="what-mark"></span></div></div>
-    <div class="pad gap">
-      <div class="stack"><h1>What do you want to sync?</h1><p class="t2">You can change this later in Settings.</p></div>
-      <div>${kindsHTML("k", state.off || [])}</div>
-      <div class="note">${svg("lock")}<p>Passwords and site logins do not sync. A later version adds this, for sites that you select.</p></div>
-      <div class="row end"><button class="primary" id="what-go">Continue</button></div>
+  render("what", `<div class="split">
+    <div class="gap">
+      <h1>What do you want to sync?</h1>
+      <div>${kindRows("k", state.off || [])}</div>
+      <p class="t3 sm">Passwords and logins do not sync.</p>
+      ${actions(back(), '<button class="primary" id="next">Continue</button>')}
     </div>
+    <div class="pic" aria-hidden="true"><div class="stage"><div class="shot-wrap" id="what-shot">${shot(`window-${here()}`)}<span class="mark" id="mark"></span></div></div></div>
   </div>`, () => {
     const pick = (k) => {
-      const pic = picture(k, state.os === "darwin"), el = $("what-shot").querySelector("img");
-      if (el.dataset.shot !== pic.name) { el.dataset.shot = pic.name; el.src = shotURL(pic.name); }
-      $("what-mark").setAttribute("style", markStyle(pic.g, pic.box));
+      const tag = here(), g = GEOM[tag], name = `${PAGE[k]}-${tag}`, img = $("what-shot").querySelector("img");
+      if (img.dataset.shot !== name) { img.dataset.shot = name; img.src = shotURL(name); }
+      $("mark").setAttribute("style", markStyle(g, g[k]));
       document.querySelectorAll(".kind").forEach((r) => r.setAttribute("aria-current", String(r.dataset.kind === k)));
     };
     wireKinds("k", null, pick); pick("bookmarks");
-    $("what-go").onclick = (e) => guard(e.currentTarget, async () => { state = await api("settings", { off: readOff("k") }); step = "profiles"; route(); });
+    $("back").onclick = async (e) => {
+      if (flow.join !== true) { go("code"); return; }
+      const b = e.currentTarget;
+      if (!(await ask("Leave this sync?", "This computer leaves the sync. You can join again with your code.", "Leave sync", true))) return;
+      guard(b, async () => { state = await api("disconnect", {}); flow.join = true; go("join"); });
+    };
+    $("next").onclick = (e) => guard(e.currentTarget, async () => { state = await api("settings", { off: readOff("k") }); go("profiles"); });
   });
 }
 
 /* 6. Profiles */
 function vProfiles() {
-  const list = state.profiles || [], anySynced = list.some((p) => p.synced);
-  render("profiles", `<div class="panel pad gap">
-    <div class="stack"><h1>Which Helium profiles do you want to sync?</h1><p class="t2">Profiles from your other computers come next to your profiles. Helium Syncer deletes nothing.</p></div>
-    <div class="divide">${list.map((p) => { const on = anySynced ? p.synced : !p.empty; return `<div class="item"><span class="avatar">${esc((p.name[0] || "?").toUpperCase())}</span><div class="grow"><h3>${esc(p.name)}</h3><p>${p.empty ? "This profile looks new or empty." : "This profile has bookmarks or history."}</p></div><label class="switch"><input type="checkbox" data-dir="${esc(p.dir)}" aria-label="Sync ${esc(p.name)}" ${on ? "checked" : ""}><span></span></label></div>`; }).join("") || '<p class="t2">Helium Syncer found no Helium profiles on this computer.</p>'}</div>
-    <div class="row ${state.setupDone ? "between" : "end"}">${state.setupDone ? '<button class="quiet" id="prof-cancel">Cancel</button>' : ""}<button class="primary" id="prof-go">${state.setupDone ? "Save" : "Continue"}</button></div>
-  </div>`, () => {
-    if ($("prof-cancel")) $("prof-cancel").onclick = () => { step = ""; route(); };
-    $("prof-go").onclick = (e) => guard(e.currentTarget, async () => {
+  const list = state.profiles || [], any = list.some((p) => p.synced);
+  render("profiles", `<div class="split"><div class="gap">
+    <div class="gap-sm"><h1>Which profiles do you want to sync?</h1><p class="t2">Profiles from your other computer come next to these.</p></div>
+    <div class="list">${list.map((p) => `<div class="item"><span class="avatar">${esc((p.name[0] || "?").toUpperCase())}</span><div class="grow"><h3>${esc(p.name)}</h3>${p.empty ? "<p>Looks empty</p>" : ""}</div><label class="switch"><input type="checkbox" data-dir="${esc(p.dir)}" aria-label="Sync ${esc(p.name)}" ${(any ? p.synced : !p.empty) ? "checked" : ""}><span></span></label></div>`).join("") || '<p class="t2">No Helium profiles found.</p>'}</div>
+    ${actions(back(), `<button class="primary" id="next">${state.setupDone ? "Save" : "Continue"}</button>`)}
+  </div>${markPic("profile")}</div>`, () => {
+    $("back").onclick = () => go(state.setupDone ? "" : "what");
+    $("next").onclick = (e) => guard(e.currentTarget, async () => {
       state = await api("profiles", { sync: [...document.querySelectorAll("[data-dir]")].filter((i) => i.checked).map((i) => i.dataset.dir) });
-      step = state.setupDone ? "" : state.hasBattery ? "battery" : "preview"; route();
+      go(state.setupDone ? "" : state.hasBattery ? "battery" : "preview");
     });
   });
 }
 
 /* 7. Battery (laptops only) */
 const BATTERY = [
-  { id: "balanced", title: "Balanced", tag: "Recommended", desc: "On battery: a check every 30 minutes. Low battery: only after you close Helium.", marks: [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0] },
-  { id: "plugged", title: "Only when plugged in", desc: "On battery, Helium Syncer waits. Your changes sync when you plug in.", marks: Array(12).fill(0) },
-  { id: "always", title: "Always", desc: "A check every 5 minutes, also on battery. This uses more battery.", marks: Array(12).fill(1) },
+  { id: "balanced", title: "Balanced", tag: "Recommended", desc: "Every 30 minutes on battery" },
+  { id: "plugged", title: "Only when plugged in", desc: "Nothing on battery" },
+  { id: "always", title: "Always", desc: "Also every 5 minutes on battery" },
 ];
 function vBattery() {
-  render("battery", `<div class="panel pad gap">
-    <div class="stack"><h1>How do you want Helium Syncer to use the battery?</h1><p class="t2">This is a laptop. When it is plugged in, Helium Syncer checks every 5 minutes. It uses about 1 second of processor time in 1 hour.</p></div>
-    <div role="radiogroup" aria-label="Battery">${BATTERY.map((b) => `<button class="option" role="radio" data-bat="${b.id}" aria-checked="${state.battery === b.id}"><span class="radio"></span><span class="grow"><b>${b.title}${b.tag ? `<span class="tag">${b.tag}</span>` : ""}</b><span class="t2">${b.desc}</span><span class="timeline" aria-hidden="true">${b.marks.map((m) => `<i class="${m ? "on" : ""}"></i>`).join("")}</span></span></button>`).join("")}</div>
-    <p class="t3 sm">The bars show the checks in 1 hour on battery. “Sync now” always works, also on battery.</p>
-    <div class="row end"><button class="primary" id="bat-go">Continue</button></div>
+  render("battery", `<div class="single gap">
+    <div class="gap-sm"><h1>How do you want to use the battery?</h1><p class="t2">Plugged in: every 5 minutes.</p></div>
+    <div role="radiogroup" aria-label="Battery">${BATTERY.map((b) => `<button class="option" role="radio" data-bat="${b.id}" aria-checked="${state.battery === b.id}"><span class="radio"></span><span class="grow"><b>${b.title}${b.tag ? `<span class="tag">${b.tag}</span>` : ""}</b><span class="t3">${b.desc}</span></span></button>`).join("")}</div>
+    ${actions(back(), '<button class="primary" id="next">Continue</button>')}
   </div>`, () => {
     let pick = state.battery;
     const btns = [...document.querySelectorAll("[data-bat]")];
     const sel = (id) => { pick = id; btns.forEach((x) => { x.setAttribute("aria-checked", String(x.dataset.bat === id)); x.tabIndex = x.dataset.bat === id ? 0 : -1; }); };
     sel(pick);
     btns.forEach((b, i) => { b.onclick = () => sel(b.dataset.bat); b.onkeydown = (e) => { const d = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key]; if (d) { e.preventDefault(); const n = btns[(i + d + btns.length) % btns.length]; sel(n.dataset.bat); n.focus(); } }; });
-    $("bat-go").onclick = (e) => guard(e.currentTarget, async () => { state = await api("settings", { battery: pick }); step = "preview"; route(); });
+    $("back").onclick = () => go("profiles");
+    $("next").onclick = (e) => guard(e.currentTarget, async () => { state = await api("settings", { battery: pick }); go("preview"); });
   });
 }
 
-/* 8. Preview */
+/* 8. Check, then sync */
 function sumByKind(m) { const o = {}; Object.entries(m || {}).forEach(([t, n]) => { const k = OPS[t]; if (k) o[k] = (o[k] || 0) + n; }); return o; }
 function lines(m, extra = "") {
   const rows = Object.entries(sumByKind(m)).filter(([k]) => !(state.off || []).includes(k));
-  return (rows.map(([k, n]) => `<div class="line"><span>${KIND[k].title}</span><b>${n.toLocaleString()}</b></div>`).join("") + extra) || '<div class="line"><span class="t3">Nothing</span></div>';
+  return rows.map(([k, n]) => `<div class="line"><span>${KIND[k][0]}</span><b>${n.toLocaleString()}</b></div>`).join("") + extra || '<div class="line"><span class="t3">Nothing</span></div>';
 }
 function vPreview() {
-  const mac = state.os === "darwin";
-  render("preview", `<div class="panel pad gap">
-    <div class="stack"><h1>Check before the first sync</h1><p class="t2" id="pv-note">Helium Syncer looks at what will change. It changes nothing yet.</p></div>
-    <div id="pv-closed" class="stage hide" style="padding:16px 18px"><div class="row" style="gap:16px;flex-wrap:nowrap">
-      ${mac ? '<span class="keys" aria-hidden="true"><span class="key">⌘</span><span class="key">Q</span></span>' : '<span class="keys" aria-hidden="true"><span class="key" style="font-size:18px">×</span></span>'}
-      <p class="sm"><b style="font-weight:500">Close Helium first.</b> ${mac ? "In Helium, press Command and Q." : "Close all Helium windows."} This page checks again every few seconds.</p></div></div>
+  render("preview", `<div class="split"><div class="gap">
+    <div class="gap-sm"><h1>Check, then sync</h1><p class="t2" id="pv-note">Nothing changes before you select Start sync.</p></div>
+    <div id="pv-open" class="box hide"><p><span class="key" aria-hidden="true">${isMac() ? "⌘" : "Alt"}</span><span class="key" aria-hidden="true">${isMac() ? "Q" : "F4"}</span> <b style="font-weight:500">Close Helium.</b></p></div>
     <div id="pv-body"></div>
-    <div class="divide">
-      <div class="item"><div class="grow"><h3>Start Helium Syncer when I log in</h3><p>It syncs after you close Helium, and while Helium is closed.</p></div><label class="switch"><input type="checkbox" id="p-auto" aria-label="Start Helium Syncer when I log in" checked><span></span></label></div>
-      <div class="item"><div class="grow"><h3>Open synced tabs when Helium starts</h3><p>This sets Helium to “Continue where you left off”.</p></div><label class="switch"><input type="checkbox" id="p-restore" aria-label="Open synced tabs when Helium starts" ${state.restoreTabs || !state.setupDone ? "checked" : ""}><span></span></label></div>
+    <div class="list">
+      <div class="item"><div class="grow"><h3>Start Helium Syncer at login</h3></div><label class="switch"><input type="checkbox" id="p-auto" aria-label="Start Helium Syncer at login" checked><span></span></label></div>
+      <div class="item"><div class="grow"><h3>Open synced tabs when Helium starts</h3></div><label class="switch"><input type="checkbox" id="p-restore" aria-label="Open synced tabs when Helium starts" ${state.restoreTabs || !state.setupDone ? "checked" : ""}><span></span></label></div>
     </div>
-    <div class="row end"><button class="secondary" id="pv-again">Check again</button><button class="primary" id="pv-go" disabled>Start sync</button></div>
-  </div>`, () => {
-    $("pv-again").onclick = () => runPreview(true);
+    ${actions(back(), '<button class="primary" id="next" disabled>Start sync</button>')}
+  </div>${pairPic()}</div>`, () => {
     $("p-restore").onchange = () => runPreview(true);
-    $("pv-go").onclick = (e) => guard(e.currentTarget, async () => {
+    $("back").onclick = () => go(state.hasBattery ? "battery" : "profiles");
+    $("next").onclick = (e) => guard(e.currentTarget, async () => {
       e.currentTarget.textContent = "Syncing…";
       await api("settings", { autostart: $("p-auto").checked, restoreTabs: $("p-restore").checked, setupDone: true });
       await api("sync", {});
@@ -586,76 +552,67 @@ function vPreview() {
   });
 }
 async function runPreview(force) {
-  if (previewing || (!force && flow.previewDone) || !$("pv-closed")) return;
-  $("pv-closed").classList.toggle("hide", !state.heliumOpen);
-  if (state.heliumOpen) { $("pv-body").innerHTML = ""; $("pv-go").disabled = true; return; }
-  previewing = true; $("pv-go").disabled = true;
+  if (previewing || (!force && flow.previewDone) || !$("pv-open")) return;
+  $("pv-open").classList.toggle("hide", !state.heliumOpen);
+  if (state.heliumOpen) { $("pv-body").innerHTML = ""; $("next").disabled = true; flow.previewDone = false; return; }
+  previewing = true; $("next").disabled = true;
   $("pv-body").innerHTML = '<p class="t3 sm">Checking…</p>';
   try {
     const p = await api("preview", { restoreTabs: $("p-restore").checked });
-    const files = (p.WouldChange || []).length + (p.WouldCreate || []).length, added = (p.ProfilesAdded || []).length;
+    const added = (p.ProfilesAdded || []).length;
     $("pv-body").innerHTML = `<div class="cols">
-      <div><h3>This computer sends</h3>${lines(p.SentByType)}</div>
-      <div><h3>This computer gets</h3>${lines(p.ReceivedByType, added ? `<div class="line"><span>New profiles, next to yours</span><b>${added}</b></div>` : "")}</div>
-    </div>
-    <div class="note" style="margin-top:18px">${svg(files ? "shield" : "check")}<p>${files ? `${files === 1 ? "1 Helium file changes" : files + " Helium files change"} on this computer. Before the change, Helium Syncer makes a backup.` : "No Helium file on this computer changes."}</p></div>`;
-    $("pv-note").textContent = "This is what happens. Nothing changed yet.";
-    $("pv-go").disabled = false; flow.previewDone = true;
+      <div><h3>Sends</h3>${lines(p.SentByType)}</div>
+      <div><h3>Gets</h3>${lines(p.ReceivedByType, added ? `<div class="line"><span>New profiles</span><b>${added}</b></div>` : "")}</div>
+    </div><p class="t3 sm" style="margin-top:12px">Helium Syncer makes a backup before it changes a file.</p>`;
+    $("next").disabled = false; flow.previewDone = true;
   } catch (e) { showError(e); $("pv-body").innerHTML = ""; }
   finally { previewing = false; }
 }
 
 /* 9. Done */
 function vDone() {
-  const name = firstName();
-  render("done", `<div class="panel pad gap">
-    <div class="stack"><h1><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" style="width:22px;height:22px;color:var(--ok);vertical-align:-3px;margin-right:6px">${I.check}</svg>All done${name ? ", " + esc(name) : ""}</h1><p class="t2">Helium Syncer is on. It syncs when you close Helium.</p></div>
-    <div class="note">${svg("laptop")}<p><b>Next:</b> install Helium Syncer on your other computer. Select “No, I use it on a different computer”. Then type your sync code.</p></div>
-    <div class="row end"><button class="primary" id="done-go">Open Helium Syncer</button></div>
-  </div>`, () => { $("done-go").onclick = () => { step = ""; route(); }; });
+  render("done", `<div class="single gap">
+    <h1><span style="color:var(--ok)">${svg("check")}</span> Sync is on${firstName() ? ", " + esc(firstName()) : ""}</h1>
+    <p class="t2">On your other computer, open Helium Syncer and select “No, I use it on a different computer”.</p>
+    ${actions("", '<button class="primary" id="next">Done</button>')}
+  </div>`, () => { $("main").querySelector("h1 svg").style.cssText = "width:22px;height:22px;vertical-align:-3px;stroke-width:2.4"; $("next").onclick = () => go(""); });
 }
 
 /* Home */
 function statusOf(s) {
   if (s.syncing) return ["busy", "Syncing", "Keep Helium closed for a moment."];
-  if (s.paused) return ["warn", "Sync is paused", s.paused];
-  if (s.lastError) return ["warn", "Sync needs your attention", s.lastError];
+  if (s.paused) return ["warn", "Paused", s.paused];
+  if (s.lastError) return ["warn", "Needs your attention", s.lastError];
   if (s.powerNote) return ["wait", "Waits for power", s.powerNote];
-  if (s.heliumOpen) return ["wait", "Helium is open", "Your changes sync when you close Helium."];
+  if (s.heliumOpen) return ["wait", "Helium is open", "Changes sync when you close Helium."];
   if (!s.lastSync) return ["ok", "Ready", "Nothing synced yet."];
-  return ["ok", "Up to date", "Last sync: " + ago(s.lastSync)];
+  return ["ok", "Up to date", "Last sync " + ago(s.lastSync)];
 }
 function vHome() {
-  const name = firstName();
-  render("home", `<div class="gap">
-    ${name ? `<p class="t2" style="margin-bottom:-10px">Hi, ${esc(name)}</p>` : ""}
-    <div class="panel pad gap">
-      <div class="status"><span class="dot" id="st-dot"></span><div class="grow"><h2 id="st-title"></h2><p class="t2 sm" id="st-sub"></p></div></div>
-      <div class="stats" id="st-stats"></div>
-      <div class="row"><button class="primary" id="sync-now">Sync now</button><button class="secondary" id="open-helium">Open Helium</button></div>
+  render("home", `<div class="home">
+    <div class="panel">
+      <div class="status"><span class="dot" id="st-dot"></span><div class="grow"><h2 id="st-title"></h2><p class="t3 sm" id="st-sub"></p></div><button class="primary" id="sync-now">Sync now</button></div>
     </div>
-    <div class="panel pad"><h2 style="margin-bottom:14px">Your computers</h2><div class="divide" id="devices"><p class="t3 sm">Loading…</p></div></div>
-    <div class="panel pad" id="settings-card"></div>
+    <div class="panel"><h2>Computers</h2><div class="list" id="devices"><p class="t3 sm" style="padding:12px 0">Loading…</p></div></div>
+    <div class="panel" id="settings"></div>
+    <p class="foot">Helium Syncer ${esc(state.appVersion)} · Free and open source · <button class="link" id="gh">GitHub</button></p>
   </div>`, () => {
     $("sync-now").onclick = (e) => guard(e.currentTarget, async () => { await api("sync", {}); say("Sync started."); await refresh(); });
-    $("open-helium").onclick = (e) => guard(e.currentTarget, () => api("open-helium", {}));
+    $("gh").onclick = () => openLink("https://github.com/imrishabhchauhan/helium-syncer");
     renderSettings(); renderHome(); loadDevices();
   });
 }
 function renderHome() {
-  const s = state, [kind, title, sub] = statusOf(s), r = s.lastReport;
+  const [kind, title, sub] = statusOf(state);
   $("st-dot").className = "dot " + kind; $("st-title").textContent = title; $("st-sub").textContent = sub;
-  $("st-stats").innerHTML = [["Profiles syncing", s.profiles.filter((p) => p.synced).length], ["Sent last time", r ? r.Sent : 0], ["Got last time", r ? r.Received : 0]]
-    .map(([l, v]) => `<div><b>${Number(v).toLocaleString()}</b>${l}</div>`).join("");
-  $("sync-now").disabled = s.heliumOpen || s.syncing;
-  $("sync-now").title = s.heliumOpen ? "Close Helium first" : "";
-  const a = $("s-auto"); if (a && document.activeElement !== a) a.checked = s.autostart;
+  $("sync-now").disabled = state.heliumOpen || state.syncing;
+  const a = $("s-auto"); if (a && document.activeElement !== a) a.checked = state.autostart;
 }
 async function loadDevices() {
   try {
     const d = await api("devices");
-    $("devices").innerHTML = d.devices.map((x) => `<div class="item">${svg("laptop")}<div class="grow"><h3>${esc(x.name)}${x.id === d.me ? '<span class="badge">This computer</span>' : ""}</h3><p>${x.platform === "macos" ? "Mac" : x.platform === "windows" ? "Windows" : esc(x.platform)} · Helium ${esc(x.helium_version || "not known yet")} · seen ${ago(x.last_seen)}</p></div>${x.id === d.me ? "" : `<button class="secondary" data-remove="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button>`}</div>`).join("");
-    if (d.devices.length < 2) $("devices").insertAdjacentHTML("beforeend", `<div class="item">${svg("plus")}<p class="grow">To add a computer, install Helium Syncer on it. Then type your sync code.</p></div>`);
+    $("devices").innerHTML = d.devices.map((x) => `<div class="item"><span class="t3">${svg("laptop")}</span><div class="grow"><h3>${esc(x.name)}${x.id === d.me ? '<span class="badge">This computer</span>' : ""}</h3><p>Seen ${ago(x.last_seen)}</p></div>${x.id === d.me ? "" : `<button class="secondary" data-remove="${esc(x.id)}" data-name="${esc(x.name)}">Remove</button>`}</div>`).join("")
+      + (d.devices.length < 2 ? `<div class="item"><span class="t3">${svg("plus")}</span><p class="grow">To add a computer, open Helium Syncer on it and type your sync code.</p></div>` : "");
   } catch (e) {
     $("devices").innerHTML = `<div class="item"><p class="grow">${esc(e.message)}</p><button class="secondary" id="dev-retry">Try again</button></div>`;
     $("dev-retry").onclick = loadDevices;
@@ -663,51 +620,51 @@ async function loadDevices() {
 }
 $("main").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-remove]"); if (!b) return;
-  if (!confirm(`Remove “${b.dataset.name}” from your sync? To join again, it needs your sync code.`)) return;
+  if (!(await ask(`Remove “${b.dataset.name}”?`, "To join again, it needs your sync code.", "Remove computer", true))) return;
   await guard(b, async () => { await api("remove-device", { id: b.dataset.remove }); await loadDevices(); });
 });
 function renderSettings() {
   const s = state, synced = s.profiles.filter((p) => p.synced).map((p) => p.name);
-  $("settings-card").innerHTML = `<h2>Settings</h2>
-    <p class="section">What syncs</p><div>${kindsHTML("s", s.off || [])}</div>
+  $("settings").innerHTML = `<h2>Settings</h2>
+    <p class="section">What syncs</p><div>${kindRows("s", s.off || [])}</div>
     <p class="section">This computer</p>
-    <div class="divide">
+    <div class="list">
       <div class="item"><div class="grow"><h3>Profiles</h3><p>${esc(synced.join(", ") || "None")}</p></div><button class="secondary" id="s-prof">Change</button></div>
-      ${s.hasBattery ? `<div class="item" style="flex-wrap:wrap"><div class="grow" style="min-width:200px"><h3>Battery</h3><p id="s-bat-desc">${BATTERY.find((b) => b.id === s.battery).desc}</p></div><div class="seg" role="radiogroup" aria-label="Battery">${BATTERY.map((b) => `<button role="radio" data-sbat="${b.id}" aria-checked="${s.battery === b.id}">${b.title}</button>`).join("")}</div></div>` : ""}
-      <div class="item"><div class="grow"><h3>Start Helium Syncer when I log in</h3><p>It syncs after you close Helium, and while Helium is closed.</p></div><label class="switch"><input type="checkbox" id="s-auto" aria-label="Start Helium Syncer when I log in" ${s.autostart ? "checked" : ""}><span></span></label></div>
-      <div class="item"><div class="grow"><h3>Open synced tabs when Helium starts</h3><p>This sets Helium to “Continue where you left off”.</p></div><label class="switch"><input type="checkbox" id="s-restore" aria-label="Open synced tabs when Helium starts" ${s.restoreTabs ? "checked" : ""}><span></span></label></div>
+      ${s.hasBattery ? `<div class="item" style="flex-wrap:wrap"><div class="grow"><h3>Battery</h3></div><div class="seg" role="radiogroup" aria-label="Battery">${BATTERY.map((b) => `<button role="radio" data-sbat="${b.id}" aria-checked="${s.battery === b.id}">${b.title}</button>`).join("")}</div></div>` : ""}
+      <div class="item"><div class="grow"><h3>Start Helium Syncer at login</h3></div><label class="switch"><input type="checkbox" id="s-auto" aria-label="Start Helium Syncer at login" ${s.autostart ? "checked" : ""}><span></span></label></div>
+      <div class="item"><div class="grow"><h3>Open synced tabs when Helium starts</h3></div><label class="switch"><input type="checkbox" id="s-restore" aria-label="Open synced tabs when Helium starts" ${s.restoreTabs ? "checked" : ""}><span></span></label></div>
       <div class="item"><div class="grow"><label class="field" for="s-person">Your name</label><input type="text" id="s-person" maxlength="40" placeholder="Enter your name" value="${esc(s.personName)}"></div></div>
-      <div class="item"><div class="grow"><label class="field" for="s-dev">Name of this computer</label><input type="text" id="s-dev" maxlength="60" value="${esc(s.deviceName)}"><p class="hint">Your other computers show this name.</p></div></div>
+      <div class="item"><div class="grow"><label class="field" for="s-dev">Computer name</label><input type="text" id="s-dev" maxlength="60" value="${esc(s.deviceName)}"></div></div>
     </div>
-    <p class="section">Sync code and help</p>
-    <div class="divide">
-      <div class="item"><div class="grow"><h3>Sync code</h3><p id="s-code">Hidden. Use it to add a computer.</p></div><button class="secondary" id="s-show">Show</button></div>
-      <div class="item"><div class="grow"><h3>How Helium Syncer works</h3><p>See the example again.</p></div><button class="secondary" id="s-how">Show</button></div>
-      <div class="item"><div class="grow"><h3>Leave this sync</h3><p>Your Helium data stays on this computer.</p></div><button class="danger" id="s-leave">Leave</button></div>
+    <p class="section">Sync</p>
+    <div class="list">
+      <div class="item"><div class="grow"><h3>Sync code</h3><p id="s-code">Hidden</p></div><button class="secondary" id="s-copy">${svg("copy")}Copy</button><button class="secondary" id="s-show">Show</button></div>
+      <div class="item"><div class="grow"><h3>How it works</h3></div><button class="secondary" id="s-how">Open</button></div>
+      <div class="item"><div class="grow"><h3>Leave this sync</h3><p>Helium stays as it is.</p></div><button class="danger" id="s-leave">Leave</button></div>
     </div>`;
   wireKinds("s", (off) => api("settings", { off }).then((st) => { state = st; say("Saved."); }).catch(showError));
-  $("s-prof").onclick = () => { step = "profiles"; route(); };
+  $("s-prof").onclick = () => go("profiles");
   document.querySelectorAll("[data-sbat]").forEach((b) => (b.onclick = () => api("settings", { battery: b.dataset.sbat }).then((st) => {
-    state = st; document.querySelectorAll("[data-sbat]").forEach((x) => x.setAttribute("aria-checked", String(x === b)));
-    $("s-bat-desc").textContent = BATTERY.find((x) => x.id === b.dataset.sbat).desc; say("Saved.");
+    state = st; document.querySelectorAll("[data-sbat]").forEach((x) => x.setAttribute("aria-checked", String(x === b))); say("Saved.");
   }).catch(showError)));
   $("s-auto").onchange = (e) => api("settings", { autostart: e.target.checked }).then(() => say("Saved.")).catch(showError);
   $("s-restore").onchange = (e) => api("settings", { restoreTabs: e.target.checked }).then(() => say("Saved.")).catch(showError);
-  const saveText = (id, field, stateKey) => $(id).addEventListener("change", (e) => {
-    const v = e.target.value.trim();
-    if (!v) { e.target.value = state[stateKey]; return; }
+  const saveText = (id, field, k) => $(id).addEventListener("change", (e) => {
+    const v = e.target.value.trim(); if (!v) { e.target.value = state[k]; return; }
     api("settings", { [field]: v }).then((st) => { state = st; say("Saved."); }).catch(showError);
   });
   saveText("s-person", "personName", "personName"); saveText("s-dev", "name", "deviceName");
+  $("s-copy").onclick = (e) => guard(e.currentTarget, async () => { await api("copy-code", {}); e.currentTarget.innerHTML = svg("check") + "Copied"; say("Copied."); });
   $("s-show").onclick = async (e) => {
     const el = $("s-code");
-    if (el.dataset.shown) { el.textContent = "Hidden. Use it to add a computer."; el.style.fontFamily = ""; delete el.dataset.shown; e.target.textContent = "Show"; return; }
-    try { const c = await api("code"); el.textContent = c.code; el.style.fontFamily = "var(--mono)"; el.dataset.shown = "1"; e.target.textContent = "Hide"; } catch (err) { showError(err); }
+    if (el.dataset.shown) { el.textContent = "Hidden"; el.style.fontFamily = ""; delete el.dataset.shown; e.target.textContent = "Show"; return; }
+    try { el.textContent = (await api("code")).code; el.style.fontFamily = "var(--mono)"; el.dataset.shown = "1"; e.target.textContent = "Hide"; } catch (err) { showError(err); }
   };
-  $("s-how").onclick = () => { flow.fromHome = true; step = "how"; route(); };
-  $("s-leave").onclick = (e) => {
-    if (!confirm("Leave this sync on this computer?\n\nYour Helium data stays on this computer. Your other computers continue to sync. To join again, you need your sync code.")) return;
-    guard(e.currentTarget, async () => { state = await api("disconnect", {}); step = "choose"; flow = {}; route(); });
+  $("s-how").onclick = () => { flow.fromHome = true; go("how"); };
+  $("s-leave").onclick = async (e) => {
+    const b = e.currentTarget;
+    if (!(await ask("Leave this sync?", "Helium stays as it is. Your other computers continue to sync. To join again, you need your sync code.", "Leave sync", true))) return;
+    guard(b, async () => { state = await api("disconnect", {}); flow = {}; go("choose"); });
   };
 }
 
@@ -715,30 +672,27 @@ function renderSettings() {
 function route() {
   const s = state;
   if (!s.heliumFound && !s.setupDone) { if (view !== "missing") vMissing(); return; }
-  if (step === "how") { if (view !== "how") vHow(); return; }
-  if ((!s.personName && !s.setupDone) || step === "hello") { if (view !== "hello") vHello(); return; }
-  if (!s.connected) {
-    if (step === "join") { if (view !== "join") vJoin(); return; }
-    if (step === "choose") { if (view !== "choose") vChoose(); return; }
-    if (view !== "how" && view !== "choose") { step = "how"; vHow(); }
-    return;
-  }
-  if (s.freshCode) { if (view !== "code") vCode(); return; }
-  if (step === "done") { if (view !== "done") vDone(); return; }
-  if (step === "profiles") { if (view !== "profiles") vProfiles(); return; }
-  if (!s.setupDone) {
-    if (!["what", "profiles", "battery", "preview"].includes(step)) step = "what";
-    const v = { what: vWhat, battery: vBattery, preview: vPreview }[step];
-    if (view !== step) v(); else if (step === "preview") runPreview(false);
-    return;
-  }
-  if (view !== "home") vHome(); else renderHome();
+  const want = (() => {
+    if (step === "how") return "how";
+    if (!s.setupDone && (!s.personName || step === "name")) return "name";
+    if (!s.connected) return step === "join" ? "join" : step === "choose" ? "choose" : "how";
+    if (s.freshCode) return "code";
+    if (["done", "profiles", "code"].includes(step)) return step;
+    if (!s.setupDone) return ["what", "battery", "preview"].includes(step) ? step : "what";
+    return "home";
+  })();
+  if (view === want) { if (want === "home") renderHome(); else if (want === "preview") runPreview(false); return; }
+  step = want;
+  ({ name: vName, how: vHow, choose: vChoose, join: vJoin, code: vCode, what: vWhat, profiles: vProfiles, battery: vBattery, preview: vPreview, done: vDone, home: vHome })[want]();
 }
 async function refresh() {
-  try { state = await api("state"); $("ver").textContent = state.appVersion; route(); }
-  catch (e) { showError(e); }
+  try {
+    const first = !state;
+    state = await api("state");
+    if (first) applyTheme(state.theme);
+    route();
+  } catch (e) { showError(e); }
 }
-applyTheme();
 refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, 3000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });

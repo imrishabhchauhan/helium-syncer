@@ -44,6 +44,7 @@ type Config struct {
 	PersonName  string    `json:"person_name,omitempty"` // only on this computer, for greetings
 	Battery     string    `json:"battery,omitempty"`     // agent.Battery* mode; empty = balanced
 	Off         []string  `json:"off,omitempty"`         // engine.Kind* not synced on this computer
+	Theme       string    `json:"theme,omitempty"`       // "dark" or "" (light)
 }
 
 // IsOff reports whether a kind (engine.Kind*) is switched off here.
@@ -228,23 +229,34 @@ func (c *Config) offMap() map[string]bool {
 // DefaultDeviceName is a friendly name for this computer, like
 // "Rishabh's MacBook Air" or "Rishabh's Windows laptop". person may be "".
 func DefaultDeviceName(person string) string {
-	kind := computerKind()
 	person = strings.TrimSpace(person)
-	if runtime.GOOS == "darwin" {
-		// macOS keeps a friendly name, e.g. "Rishabh's MacBook Air".
-		if out, err := exec.Command("/usr/sbin/scutil", "--get", "ComputerName").Output(); err == nil {
-			if n := strings.TrimSpace(string(out)); n != "" {
-				if person == "" {
-					return n
-				}
-				kind = macModel(n)
-			}
+	if person == "" && runtime.GOOS == "darwin" {
+		if n := macComputerName(); n != "" {
+			return n // macOS keeps a friendly name, e.g. "Rishabh's MacBook Air"
 		}
 	}
 	if person != "" {
-		return person + "'s " + kind
+		return person + "'s " + DeviceKind()
 	}
-	return "My " + kind
+	return "My " + DeviceKind()
+}
+
+// DeviceKind is what this computer is, e.g. "MacBook Air" or "Windows laptop".
+func DeviceKind() string {
+	if runtime.GOOS == "darwin" {
+		if n := macComputerName(); n != "" {
+			return macModel(n)
+		}
+	}
+	return computerKind()
+}
+
+func macComputerName() string {
+	out, err := exec.Command("/usr/sbin/scutil", "--get", "ComputerName").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // macModel takes the model part of a macOS computer name:
