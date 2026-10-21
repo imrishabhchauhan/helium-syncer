@@ -30,7 +30,7 @@ type ExtData struct {
 
 // ExtPlan is what the engine must do on this device after merging.
 type ExtPlan struct {
-	Install  []string // ids to install from their synced package (missing here, or older here)
+	Install  []string // ids to install from their synced package (missing here)
 	Remove   []string // ids uninstalled on another device
 	Enable   []string
 	Disable  []string
@@ -109,7 +109,10 @@ func PlanExtensions(curExts, curData map[string]json.RawMessage, exts, data *crd
 			continue
 		}
 		switch {
-		case !here || (local.Version != want.Version && newerVersion(want.Version, local.Version)):
+		// A newer version on another computer is not copied: Helium updates
+		// Web Store extensions on each computer itself. Copying an update
+		// costs a large upload and download (44 MB for 1Password).
+		case !here:
 			p.Install = append(p.Install, id)
 			if !want.Enabled {
 				p.Disable = append(p.Disable, id)
@@ -131,36 +134,4 @@ func PlanExtensions(curExts, curData map[string]json.RawMessage, exts, data *crd
 		}
 	}
 	return p
-}
-
-// newerVersion compares dotted extension versions numerically.
-func newerVersion(a, b string) bool {
-	pa, pb := splitVersion(a), splitVersion(b)
-	for i := 0; i < max(len(pa), len(pb)); i++ {
-		var x, y int
-		if i < len(pa) {
-			x = pa[i]
-		}
-		if i < len(pb) {
-			y = pb[i]
-		}
-		if x != y {
-			return x > y
-		}
-	}
-	return false
-}
-
-func splitVersion(v string) []int {
-	var out []int
-	n := 0
-	for _, c := range v + "." {
-		if c == '.' {
-			out = append(out, n)
-			n = 0
-		} else if c >= '0' && c <= '9' {
-			n = n*10 + int(c-'0')
-		}
-	}
-	return out
 }

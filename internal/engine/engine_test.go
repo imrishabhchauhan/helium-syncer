@@ -279,6 +279,19 @@ func TestExtensionsFollowAcrossDevices(t *testing.T) {
 		t.Fatalf("Windows should have nothing new to send after installing, sent %d", n)
 	}
 
+	// Helium updates the extension on the Mac: nothing is uploaded again, and
+	// Windows keeps its version (its own Helium updates it).
+	puts = server.BlobPuts
+	installFakeExtension(t, macP, "4.9.140", "theme=dark हिंदी")
+	mustRun(mac)
+	if server.BlobPuts != puts {
+		t.Fatalf("an extension update uploaded %d blob(s)", server.BlobPuts-puts)
+	}
+	mustRun(win)
+	if list, _ := extensions.List(winP); len(list) != 1 || list[0].Version != "4.9.133" {
+		t.Fatalf("Windows should keep its own version: %+v", list)
+	}
+
 	// Disable on the Mac and change its data: both follow.
 	extensions.SetEnabled(macP, darkReader, false, "x")
 	os.WriteFile(filepath.Join(macP, "Local Extension Settings", darkReader, "000003.log"), []byte("theme=light"), 0o600)

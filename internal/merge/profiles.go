@@ -21,6 +21,9 @@ type ProfileItem struct {
 	// is left as it is.
 	Avatar        *int `json:"a,omitempty"`
 	DefaultAvatar bool `json:"d,omitempty"`
+	// The profile colours (profiles.ColorKeys). Only items with a picture
+	// carry them: nil there means "no colours".
+	Colors map[string]int64 `json:"c,omitempty"`
 }
 
 // sameAvatar reports whether a local item already shows want's picture.
@@ -30,6 +33,24 @@ func sameAvatar(local, want ProfileItem) bool {
 	}
 	return local.Avatar != nil && *local.Avatar == *want.Avatar && local.DefaultAvatar == want.DefaultAvatar
 }
+
+// sameColors reports whether a local item already shows want's colours.
+// Only the main colour (the seed) counts: Helium makes the other shades
+// from it, and they differ a little between light and dark mode. Comparing
+// them would make two computers overwrite each other again and again.
+func sameColors(local, want ProfileItem) bool {
+	if want.Avatar == nil {
+		return true // an item from an older version: keep the colours here
+	}
+	if (len(local.Colors) == 0) != (len(want.Colors) == 0) {
+		return false
+	}
+	ls, lok := local.Colors[colorSeed]
+	ws, wok := want.Colors[colorSeed]
+	return lok == wok && ls == ws
+}
+
+const colorSeed = "profile_color_seed"
 
 // ProfileLinks maps this device's profile folders to synced profile ids.
 // Only linked profiles sync; the user picks which local profiles to link.
@@ -116,6 +137,11 @@ func SyncProfiles(userData string, links ProfileLinks, suffix map[string]string,
 					return nil, nil, plan, err
 				}
 			}
+			if len(p.Colors) > 0 {
+				if err := profiles.SetColors(userData, newDir, p.Colors); err != nil {
+					return nil, nil, plan, err
+				}
+			}
 			links[newDir] = id
 			if end != "" {
 				suffix[newDir] = end
@@ -141,10 +167,20 @@ func SyncProfiles(userData string, links ProfileLinks, suffix map[string]string,
 				}
 				plan.Renamed = append(plan.Renamed, dir)
 			}
+			changed := false
 			if !sameAvatar(local, p) {
 				if err := profiles.SetAvatar(userData, dir, *p.Avatar, p.DefaultAvatar); err != nil {
 					return nil, nil, plan, err
 				}
+				changed = true
+			}
+			if !sameColors(local, p) {
+				if err := profiles.SetColors(userData, dir, p.Colors); err != nil {
+					return nil, nil, plan, err
+				}
+				changed = true
+			}
+			if changed {
 				plan.Renamed = append(plan.Renamed, dir) // changed here: Helium reloads it
 			}
 		}
@@ -198,7 +234,7 @@ func extractProfiles(userData string, links ProfileLinks, suffix map[string]stri
 			it := ProfileItem{Name: name}
 			if p.Avatar >= 0 {
 				a := p.Avatar
-				it.Avatar, it.DefaultAvatar = &a, p.DefaultAvatar
+				it.Avatar, it.DefaultAvatar, it.Colors = &a, p.DefaultAvatar, p.Colors
 			}
 			raw, _ := json.Marshal(it)
 			out[id] = raw

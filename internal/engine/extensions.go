@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/crdt"
 	"github.com/imrishabhchauhan/helium-syncer/internal/extensions"
@@ -39,6 +40,14 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 			key := id + "@" + version
 			if b, ok := ps.ExtBlobs[key]; ok || !upload {
 				return b, nil
+			}
+			// Helium updated the extension here: keep the package that is
+			// already uploaded. A computer that installs it from there gets
+			// the update from Helium, so a new 44 MB upload buys nothing.
+			for k, b := range ps.ExtBlobs {
+				if strings.HasPrefix(k, id+"@") {
+					return b, nil
+				}
 			}
 			pkg, err := extensions.Package(dir, id)
 			if err != nil {

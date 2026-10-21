@@ -6,6 +6,7 @@
 package profiles
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,6 +25,27 @@ type Profile struct {
 	Name          string
 	Avatar        int  // built-in picture number (IDR_PROFILE_AVATAR_n), -1 if not known
 	DefaultAvatar bool // Helium shows its default picture in the profile colour
+	// Colors are the profile colours Helium shows on the picture and in the
+	// profile list (ColorKeys -> ARGB number). Nil when the profile has none.
+	Colors map[string]int64
+}
+
+// ColorKeys are the info_cache fields that hold a profile's colours.
+var ColorKeys = []string{"profile_highlight_color", "default_avatar_fill_color", "default_avatar_stroke_color", "profile_color_seed"}
+
+func colorsOf(entry map[string]any) map[string]int64 {
+	var out map[string]int64
+	for _, k := range ColorKeys {
+		if n, ok := entry[k].(json.Number); ok {
+			if v, err := n.Int64(); err == nil {
+				if out == nil {
+					out = map[string]int64{}
+				}
+				out[k] = v
+			}
+		}
+	}
+	return out
 }
 
 var avatarRe = regexp.MustCompile(`IDR_PROFILE_AVATAR_(\d+)$`)
@@ -65,7 +87,7 @@ func List(userData string) ([]Profile, error) {
 		name, _ := m["name"].(string)
 		icon, _ := m["avatar_icon"].(string)
 		def, _ := m["is_using_default_avatar"].(bool)
-		out = append(out, Profile{Dir: dir, Name: name, Avatar: avatarOf(icon), DefaultAvatar: def})
+		out = append(out, Profile{Dir: dir, Name: name, Avatar: avatarOf(icon), DefaultAvatar: def, Colors: colorsOf(m)})
 	}
 	sort.Slice(out, func(a, b int) bool { return out[a].Dir < out[b].Dir })
 	return out, nil
@@ -130,6 +152,27 @@ func SetAvatar(userData, dir string, avatar int, isDefault bool) error {
 					return err
 				}
 			}
+		}
+	}
+	return writeAtomic(filepath.Join(userData, "Local State"), []byte(chromejson.Compact(doc)))
+}
+
+// SetColors sets a profile's colours in Local State. Colours not in colors
+// are removed, so Helium shows its plain default. Helium must not be running.
+func SetColors(userData, dir string, colors map[string]int64) error {
+	doc, err := loadLocalState(userData)
+	if err != nil {
+		return err
+	}
+	entry, _ := chromejson.Lookup(doc, "profile.info_cache."+dir).(map[string]any)
+	if entry == nil {
+		return fmt.Errorf("profiles: no profile %q", dir)
+	}
+	for _, k := range ColorKeys {
+		if v, ok := colors[k]; ok {
+			entry[k] = json.Number(strconv.FormatInt(v, 10))
+		} else {
+			delete(entry, k)
 		}
 	}
 	return writeAtomic(filepath.Join(userData, "Local State"), []byte(chromejson.Compact(doc)))

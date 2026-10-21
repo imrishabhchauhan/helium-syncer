@@ -6,6 +6,7 @@ package profiles
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
 	"github.com/imrishabhchauhan/helium-syncer/internal/testkit"
 )
 
@@ -158,4 +160,69 @@ func TestPictureWithHelium(t *testing.T) {
 		t.Fatal(err)
 	}
 	check(40, false, "after a change")
+}
+
+// Helium keeps the colours that Helium Syncer writes when the profile has
+// the same theme colour (the theme syncs as a setting).
+func TestColorsWithHelium(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	root, _ := filepath.Abs("../..")
+	ud := filepath.Join(root, "test-profiles", fmt.Sprintf("it-colors-%d", time.Now().Unix()))
+	probe := filepath.Join(root, "testing", "probe-extension")
+	opts := testkit.Options{Exe: heliumExe(t), UserDataDir: ud, Port: 9356, ProbeDir: probe}
+	in, err := testkit.Start(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := Add(ud, "Colors", 26)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The theme colour, as the settings sync writes it.
+	prefsPath := filepath.Join(ud, dir, "Preferences")
+	data, _ := os.ReadFile(prefsPath)
+	v, _ := chromejson.Decode(data)
+	p := v.(map[string]any)
+	chromejson.Set(p, "browser.theme.user_color2", json.Number("-7558172"))
+	chromejson.Set(p, "browser.theme.color_variant2", json.Number("1"))
+	os.WriteFile(prefsPath, []byte(chromejson.Compact(p)), 0o600)
+	open := func() map[string]int64 {
+		o := opts
+		o.ProfileDir = dir
+		in, err := testkit.Start(ctx, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(3 * time.Second)
+		if err := in.Close(ctx); err != nil {
+			t.Fatal(err)
+		}
+		list, _ := List(ud)
+		for _, p := range list {
+			if p.Dir == dir {
+				return p.Colors
+			}
+		}
+		t.Fatal("profile gone")
+		return nil
+	}
+	made := open()
+	t.Logf("colours Helium makes from the theme: %v", made)
+	if len(made) == 0 {
+		t.Fatal("Helium made no colours from the theme colour")
+	}
+	// Write those colours to a second profile with the same theme: kept.
+	dir2, _ := Add(ud, "Colors 2", 26)
+	os.WriteFile(filepath.Join(ud, dir2, "Preferences"), []byte(chromejson.Compact(p)), 0o600)
+	if err := SetColors(ud, dir2, made); err != nil {
+		t.Fatal(err)
+	}
+	dir = dir2
+	if got := open(); fmt.Sprint(got) != fmt.Sprint(made) {
+		t.Fatalf("Helium changed the written colours: %v, want %v", got, made)
+	}
 }

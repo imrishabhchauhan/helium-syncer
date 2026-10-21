@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -219,5 +220,73 @@ func TestOldItemsKeepThePicture(t *testing.T) {
 	a, b := 30, 31
 	if sameAvatar(ProfileItem{Avatar: &a}, ProfileItem{Avatar: &b}) {
 		t.Fatal("different pictures must be seen")
+	}
+}
+
+// The profile colours follow, and go away when the other computer has none.
+func TestProfileColorsFollow(t *testing.T) {
+	mac := userDataWith(t, map[string]string{"Default": "Work"})
+	win := userDataWith(t, map[string]string{"Default": "Your Helium"})
+	blue := map[string]int64{"profile_highlight_color": -14802912, "default_avatar_fill_color": -14802912, "default_avatar_stroke_color": -3750202, "profile_color_seed": -4537345}
+	if err := profiles.SetAvatar(mac, "Default", 26, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := profiles.SetColors(mac, "Default", blue); err != nil {
+		t.Fatal(err)
+	}
+	macLinks, winLinks := ProfileLinks{}, ProfileLinks{}
+	macLinks.LinkNew("Default")
+	avatar := func(int) int { return 26 }
+	macState, winState := crdt.NewMap(), crdt.NewMap()
+	macClock, winClock := crdt.NewClock("mac", nil), crdt.NewClock("win", nil)
+	macBase, out, _, err := SyncProfiles(mac, macLinks, nil, map[string]json.RawMessage{}, macState, macClock, nil, avatar)
+	if err != nil {
+		t.Fatal(err)
+	}
+	winBase, _, plan, err := SyncProfiles(win, winLinks, nil, map[string]json.RawMessage{}, winState, winClock, out, avatar)
+	if err != nil || len(plan.Added) != 1 {
+		t.Fatalf("add: %v %+v", err, plan)
+	}
+	added := ""
+	for d := range plan.Added {
+		added = d
+	}
+	colors := func(ud, dir string) map[string]int64 {
+		list, _ := profiles.List(ud)
+		for _, p := range list {
+			if p.Dir == dir {
+				return p.Colors
+			}
+		}
+		return nil
+	}
+	if got := colors(win, added); !reflect.DeepEqual(got, blue) {
+		t.Fatalf("added profile colours %v, want %v", got, blue)
+	}
+	// Existing profile, colours set later on the Mac.
+	green := map[string]int64{"profile_highlight_color": -16744448, "profile_color_seed": -16711936}
+	profiles.SetColors(mac, "Default", green)
+	macBase, out, _, _ = SyncProfiles(mac, macLinks, nil, macBase, macState, macClock, nil, avatar)
+	winBase, _, _, _ = SyncProfiles(win, winLinks, nil, winBase, winState, winClock, out, avatar)
+	if got := colors(win, added); !reflect.DeepEqual(got, green) {
+		t.Fatalf("after the change: %v, want %v", got, green)
+	}
+	// Only a shade differs (light or dark mode): Windows keeps its own.
+	shade := map[string]int64{"profile_highlight_color": -1, "profile_color_seed": -16711936}
+	profiles.SetColors(mac, "Default", shade)
+	macBase, out, _, _ = SyncProfiles(mac, macLinks, nil, macBase, macState, macClock, nil, avatar)
+	winBase, _, _, _ = SyncProfiles(win, winLinks, nil, winBase, winState, winClock, out, avatar)
+	if got := colors(win, added); !reflect.DeepEqual(got, green) {
+		t.Fatalf("a shade change was written: %v, want %v", got, green)
+	}
+	// The Mac goes back to no colours: Windows too.
+	profiles.SetColors(mac, "Default", nil)
+	_, out, _, _ = SyncProfiles(mac, macLinks, nil, macBase, macState, macClock, nil, avatar)
+	SyncProfiles(win, winLinks, nil, winBase, winState, winClock, out, avatar)
+	if got := colors(win, added); got != nil {
+		t.Fatalf("colours kept after the Mac removed them: %v", got)
+	}
+	if got := colors(win, "Default"); got != nil {
+		t.Fatalf("an unsynced profile got colours: %v", got)
 	}
 }

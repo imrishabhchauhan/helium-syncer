@@ -32,27 +32,15 @@ func TestPlanExtensions(t *testing.T) {
 		{Type: TypeExtData, Key: "off", Value: extData("same", "blob-mac"), Stamp: st(6)},
 	}
 	cur := map[string]json.RawMessage{
-		"ublock": ext("uBO Lite", "1.9", true), // older here
+		"ublock": ext("uBO Lite", "1.9", true), // older here: Helium updates it itself
 		"old":    ext("Old", "1.0", true),      // removed on the Mac
 		"off":    ext("Off", "1.0", true),      // disabled on the Mac
 		"mine":   ext("Only here", "1.0", true),
 	}
 	curData := map[string]json.RawMessage{"off": extData("same", "blob-win")}
 	p := PlanExtensions(cur, curData, exts, data, clock, incoming, nil)
-	want := ExtPlan{Install: []string{"dark", "ublock"}, Remove: []string{"old"}, Disable: []string{"off"}, LoadData: []string{"dark"}}
+	want := ExtPlan{Install: []string{"dark"}, Remove: []string{"old"}, Disable: []string{"off"}, LoadData: []string{"dark"}}
 	if !reflect.DeepEqual(p, want) {
 		t.Fatalf("plan %+v\nwant %+v", p, want)
-	}
-}
-
-func TestNewerVersion(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want bool
-	}{{"4.9.133", "4.9.99", true}, {"1.10", "1.9", true}, {"1.0", "1.0.0", false}, {"2", "10", false}}
-	for _, c := range cases {
-		if got := newerVersion(c.a, c.b); got != c.want {
-			t.Errorf("newerVersion(%s, %s) = %v", c.a, c.b, got)
-		}
 	}
 }
