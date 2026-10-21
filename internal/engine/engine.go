@@ -164,33 +164,50 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		os.Remove(filepath.Join(cfg.StateDir, journalFile))
 	}
 
-	// 2. Version gate.
+	// 2. Version gate, and receive. Both ask the server: they run at the
+	// same time. Nothing is applied or sent before the gate passed.
 	version, err := helium.DataVersion(cfg.UserData)
 	if err != nil {
 		return rep, err
 	}
 	ctx = context.WithValue(ctx, timerKey{}, &rep)
 	defer rep.step("total")()
-	done := rep.step("versions")
-	peers, err := cfg.Transport.Versions(ctx, cfg.DeviceID)
+	done := rep.step("load state")
+	st, err := LoadState(cfg.StateDir, cfg.DeviceID)
 	done()
 	if err != nil {
 		return rep, err
+	}
+	var (
+		peers    map[string]string
+		vErr     error
+		incoming []crdt.Op
+		next     string
+		pErr     error
+		wg       sync.WaitGroup
+	)
+	done = rep.step("server")
+	wg.Add(3)
+	go func() { defer wg.Done(); peers, vErr = cfg.Transport.Versions(ctx, cfg.DeviceID) }()
+	// This computer's name and Helium version, for the other computers (also
+	// when the gate pauses: they then see which version this one has).
+	go func() { defer wg.Done(); cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version) }()
+	go func() { defer wg.Done(); incoming, next, pErr = cfg.Transport.Pull(ctx, st.Cursor) }()
+	wg.Wait()
+	done()
+	if vErr != nil {
+		return rep, vErr
 	}
 	if err := helium.CheckVersions(version, peers); err != nil {
 		var ge *helium.GateError
 		if errors.As(err, &ge) {
 			rep.Paused = ge.Message
-			return rep, nil
+			return rep, nil // the pulled ops are not used: the cursor stays
 		}
 		return rep, err
 	}
-
-	done = rep.step("load state")
-	st, err := LoadState(cfg.StateDir, cfg.DeviceID)
-	done()
-	if err != nil {
-		return rep, err
+	if pErr != nil {
+		return rep, pErr
 	}
 	clock := crdt.NewClock(cfg.DeviceID, func() int64 { return cfg.Now().UnixMilli() })
 	clock.Restore(st.Clock)
@@ -206,13 +223,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		st.Outbox = nil
 	}
 
-	// 4. Receive.
-	done = rep.step("pull")
-	incoming, next, err := cfg.Transport.Pull(ctx, st.Cursor)
-	done()
-	if err != nil {
-		return rep, err
-	}
+	// 4. Receive (pulled above).
 	var mine []crdt.Op
 	for _, op := range incoming {
 		if op.Stamp.Device != cfg.DeviceID {
@@ -282,7 +293,6 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			}
 		}
 	}
-	cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version)
 	pruneBackups(cfg.StateDir, 20, 30*24*time.Hour, cfg.Now())
 	return rep, nil
 }
