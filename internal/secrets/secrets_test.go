@@ -2,10 +2,16 @@ package secrets
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
 func TestSaveLoadDelete(t *testing.T) {
+	// On macOS this writes a test item to the person's login Keychain, so it
+	// runs only when asked: HELIUM_SYNCER_KEYCHAIN_TEST=1.
+	if runtime.GOOS == "darwin" && os.Getenv("HELIUM_SYNCER_KEYCHAIN_TEST") != "1" {
+		t.Skip("uses the login Keychain; set HELIUM_SYNCER_KEYCHAIN_TEST=1 to run it")
+	}
 	dir := t.TempDir()
 	name := "test-" + t.Name()
 	defer Delete(dir, name)
