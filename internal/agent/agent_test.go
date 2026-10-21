@@ -140,7 +140,8 @@ func TestShowHandoff(t *testing.T) {
 	}
 	defer l.Close()
 	shown := make(chan struct{}, 4)
-	go ServeShow(l, func() { shown <- struct{}{} })
+	quit := make(chan struct{}, 1)
+	go ServeShow(l, func() { shown <- struct{}{} }, func() { quit <- struct{}{} })
 	if err := AskToShow(); err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +172,14 @@ func TestShowHandoff(t *testing.T) {
 	}
 	if len(shown) != 0 {
 		t.Fatal("a refused request showed the window")
+	}
+	if err := AskToQuit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-quit:
+	case <-time.After(2 * time.Second):
+		t.Fatal("quit was not asked")
 	}
 }
 

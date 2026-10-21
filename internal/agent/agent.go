@@ -180,29 +180,39 @@ func Lock() (net.Listener, error) {
 	return l, nil
 }
 
-// ServeShow answers "show your window" from a second copy of the app, on
-// the lock port. Websites cannot send the custom header without a CORS
-// preflight, which is refused, so they cannot trigger it.
-func ServeShow(l net.Listener, show func()) error {
+// ServeShow answers "show your window" and "quit" from another copy of the
+// app, on the lock port. Websites cannot send the custom header without a
+// CORS preflight, which is refused, so they cannot trigger either.
+func ServeShow(l net.Listener, show, quit func()) error {
 	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/show" || r.Host != LockAddr || r.Header.Get("X-Helium-Syncer") != "show" {
+		what := r.Header.Get("X-Helium-Syncer")
+		if r.Method != http.MethodPost || r.Host != LockAddr || r.URL.Path != "/"+what || (what != "show" && what != "quit") {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		show()
 		w.WriteHeader(http.StatusNoContent)
+		if what == "show" {
+			show()
+		} else if quit != nil {
+			go quit()
+		}
 	})}
 	return srv.Serve(l)
 }
 
 // AskToShow asks the copy that holds the lock to show its window. It fails
 // when that copy is the command-line agent, which has no window.
-func AskToShow() error {
-	req, err := http.NewRequest(http.MethodPost, "http://"+LockAddr+"/show", nil)
+func AskToShow() error { return ask("show") }
+
+// AskToQuit asks the running app to quit (for scripts and updates).
+func AskToQuit() error { return ask("quit") }
+
+func ask(what string) error {
+	req, err := http.NewRequest(http.MethodPost, "http://"+LockAddr+"/"+what, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Helium-Syncer", "show")
+	req.Header.Set("X-Helium-Syncer", what)
 	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
 	res, err := c.Do(req)
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/agent"
@@ -26,6 +27,13 @@ func main() {
 	// Started at login: stay quiet in the tray. Started by a person: open
 	// the window too.
 	background := len(os.Args) > 1 && os.Args[1] == "--background"
+	if len(os.Args) > 1 && os.Args[1] == "--quit" { // for scripts and updates
+		if err := agent.AskToQuit(); err != nil {
+			fmt.Fprintln(os.Stderr, "Helium Syncer is not running")
+			os.Exit(1)
+		}
+		return
+	}
 	agent.AutostartArgs = []string{"--background"}
 	power.Efficient() // Windows efficiency mode: low clock speed, efficient cores
 	logger := openLog()
@@ -60,25 +68,16 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if lock != nil {
-		go agent.ServeShow(lock, open)
+		go agent.ServeShow(lock, open, tray.Quit)
 		go keepAgent(ctx, s, logger)
 	}
 	if !background {
 		open()
 	}
 
-	tray.Run(tray.Options{
-		Status: func() tray.View { return view(s, lock == nil) },
-		Open:   open,
-		SyncNow: func() {
-			if a := s.Agent(); a != nil {
-				select {
-				case a.Trigger <- struct{}{}:
-				default:
-				}
-			}
-		},
-		OnQuit: func() {
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
 			// Let a sync that is writing finish first (it is crash-safe
 			// anyway, but finishing is kinder).
 			if a := s.Agent(); a != nil {
@@ -91,8 +90,26 @@ func main() {
 			if lock != nil {
 				lock.Close()
 			}
+			logger.Printf("Helium Syncer quit")
+		})
+	}
+	tray.Run(tray.Options{
+		Status: func() tray.View { return view(s, lock == nil) },
+		Open:   open,
+		SyncNow: func() {
+			if a := s.Agent(); a != nil {
+				select {
+				case a.Trigger <- struct{}{}:
+				default:
+				}
+			}
 		},
+		OnQuit: cleanup,
 	})
+	// On macOS the tray loop can end without calling OnQuit: clean up and
+	// end the process here in every case, so Quit always quits.
+	cleanup()
+	os.Exit(0)
 }
 
 // keepAgent starts the background sync as soon as this computer is

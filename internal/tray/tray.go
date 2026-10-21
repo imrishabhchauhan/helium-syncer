@@ -18,6 +18,9 @@ type Options struct {
 	OnQuit  func() // runs before the app exits
 }
 
+// Quit ends Run (from any goroutine).
+func Quit() { systray.Quit() }
+
 // Run shows the tray and blocks until Quit. Call it from main: macOS needs
 // the menu bar on the main thread.
 func Run(o Options) {
