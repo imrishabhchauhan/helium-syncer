@@ -1,6 +1,7 @@
 package app
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -29,5 +30,19 @@ func TestLoadCachedSeesChanges(t *testing.T) {
 	c.Save()
 	if got, _ := LoadCached(); got.DeviceName != "Two" || got.Battery != "plugged" {
 		t.Fatalf("change not seen: %+v", got)
+	}
+}
+
+func TestMacModel(t *testing.T) {
+	for in, want := range map[string]string{
+		"Rishabh's MacBook Air":      "MacBook Air",
+		"Rishabh\u2019s MacBook Pro": "MacBook Pro",
+		"MacBook Air":                "MacBook Air",
+		"Studio":                     "Studio",
+		"Ann's ":                     "Ann's",
+	} {
+		if got := macModel(strings.TrimSpace(in)); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
 	}
 }

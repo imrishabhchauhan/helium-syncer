@@ -45,12 +45,15 @@ func TestProfilesFirstJoinAddsNeverMerges(t *testing.T) {
 	winLinks := ProfileLinks{} // the user chose not to sync "Your Helium"
 	avatar := func(int) int { return 26 }
 	macState, winState := crdt.NewMap(), crdt.NewMap()
-	macBase, out, _, err := SyncProfiles(mac, macLinks, nil, map[string]json.RawMessage{}, macState, crdt.NewClock("mac", nil), nil, avatar)
+	// One clock per computer, kept between syncs, as the engine does. A new
+	// clock in the same millisecond could give a rename an older stamp.
+	macClock, winClock := crdt.NewClock("mac", nil), crdt.NewClock("win", nil)
+	macBase, out, _, err := SyncProfiles(mac, macLinks, nil, map[string]json.RawMessage{}, macState, macClock, nil, avatar)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.log = append(s.log, out...)
-	winBase, _, plan, err := SyncProfiles(win, winLinks, nil, map[string]json.RawMessage{}, winState, crdt.NewClock("win", nil), s.log, avatar)
+	winBase, _, plan, err := SyncProfiles(win, winLinks, nil, map[string]json.RawMessage{}, winState, winClock, s.log, avatar)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,10 +66,9 @@ func TestProfilesFirstJoinAddsNeverMerges(t *testing.T) {
 	if err := profiles.Rename(mac, "Profile 1", "Work 💼"); err != nil {
 		t.Fatal(err)
 	}
-	macClock := crdt.NewClock("mac", nil)
 	_, out, _, _ = SyncProfiles(mac, macLinks, nil, macBase, macState, macClock, nil, avatar)
 	s.log = append(s.log, out...)
-	winBase, _, plan, _ = SyncProfiles(win, winLinks, nil, winBase, winState, crdt.NewClock("win", nil), out, avatar)
+	winBase, _, plan, _ = SyncProfiles(win, winLinks, nil, winBase, winState, winClock, out, avatar)
 	found := false
 	for _, n := range names(t, win) {
 		found = found || n == "Work 💼"
@@ -81,7 +83,7 @@ func TestProfilesFirstJoinAddsNeverMerges(t *testing.T) {
 	os.WriteFile(filepath.Join(mac, "Local State"), ls, 0o600)
 	macLinks["Default"] = "gone" // simulate the stale link the engine had
 	_, out, _, _ = SyncProfiles(mac, macLinks, nil, macBase, macState, macClock, nil, avatar)
-	_, _, plan, _ = SyncProfiles(win, winLinks, nil, winBase, winState, crdt.NewClock("win", nil), out, avatar)
+	_, _, plan, _ = SyncProfiles(win, winLinks, nil, winBase, winState, winClock, out, avatar)
 	if len(names(t, win)) != 3 {
 		t.Fatalf("a profile deleted elsewhere must not be deleted here: %v", names(t, win))
 	}

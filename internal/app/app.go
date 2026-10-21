@@ -234,10 +234,10 @@ func DefaultDeviceName(person string) string {
 		// macOS keeps a friendly name, e.g. "Rishabh's MacBook Air".
 		if out, err := exec.Command("/usr/sbin/scutil", "--get", "ComputerName").Output(); err == nil {
 			if n := strings.TrimSpace(string(out)); n != "" {
-				if strings.Contains(n, "'s ") || strings.Contains(n, "’s ") || person == "" {
+				if person == "" {
 					return n
 				}
-				kind = n // e.g. "MacBook Air" -> "Priya's MacBook Air"
+				kind = macModel(n)
 			}
 		}
 	}
@@ -245,6 +245,17 @@ func DefaultDeviceName(person string) string {
 		return person + "'s " + kind
 	}
 	return "My " + kind
+}
+
+// macModel takes the model part of a macOS computer name:
+// "Ann's MacBook Air" -> "MacBook Air"; "MacBook Air" stays as it is.
+func macModel(name string) string {
+	for _, sep := range []string{"'s ", "’s "} {
+		if i := strings.Index(name, sep); i >= 0 && strings.TrimSpace(name[i+len(sep):]) != "" {
+			return strings.TrimSpace(name[i+len(sep):])
+		}
+	}
+	return name
 }
 
 func computerKind() string {

@@ -47,6 +47,9 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 		"--user-data-dir=" + o.UserDataDir,
 		fmt.Sprintf("--remote-debugging-port=%d", o.Port),
 		"--no-first-run", "--no-default-browser-check", "--window-size=900,600",
+		// Never the person's login Keychain (macOS) or keyring (Linux): a test
+		// instance keeps its secrets in its own test folder.
+		"--use-mock-keychain", "--password-store=basic",
 	}
 	if o.ProbeDir != "" {
 		args = append(args, "--load-extension="+o.ProbeDir)

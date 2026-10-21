@@ -260,12 +260,19 @@ $("theme").onclick = () => {
 /* Real Helium pictures (captured from Helium: testing/lab/capture-helium.ps1). */
 const shotURL = (name) => `/img/${name}-${dark() ? "dark" : "light"}.webp`;
 const shot = (name, alt) => `<img class="shot" data-shot="${name}" src="${shotURL(name)}" width="1300" height="770" alt="${esc(alt)}" decoding="async">`;
-// Where each item is in the picture, in pixels of the 1736 × 1028 capture.
-const AREA = {
-  tabs: ["window", [0, 0, 1390, 70]], bookmarks: ["window", [0, 128, 1290, 192]], history: ["history", [56, 355, 1650, 872]],
-  settings: ["settings", [172, 437, 1534, 1022]], extensions: ["extensions", [452, 486, 1254, 808]],
+// Pictures per system. Each item's place, in pixels of the capture.
+const GEOM = {
+  win: { w: 1736, h: 1028, tabs: [0, 0, 1390, 70], bookmarks: [0, 128, 1290, 192], history: [56, 355, 1650, 872], settings: [172, 437, 1534, 1022], extensions: [452, 486, 1254, 1016] },
+  mac: { w: 1760, h: 1040, tabs: [0, 0, 1690, 68], bookmarks: [0, 126, 1390, 190], history: [54, 352, 1706, 870], settings: [198, 434, 1562, 1035], extensions: null },
 };
-const markStyle = ([x0, y0, x1, y1]) => `left:${x0 / 17.36}%;top:${y0 / 10.28}%;width:${(x1 - x0) / 17.36}%;height:${(y1 - y0) / 10.28}%`;
+const PAGE = { tabs: "window", bookmarks: "window", history: "history", settings: "settings", extensions: "extensions" };
+const sys = (mac) => (mac ? "mac" : "win");
+// The Mac extensions picture is not ready yet: Mac uses the Windows one.
+function picture(kind, mac) {
+  const tag = kind === "extensions" && mac && !GEOM.mac.extensions ? "win" : sys(mac);
+  return { name: `${PAGE[kind]}-${tag}`, g: GEOM[tag], box: GEOM[tag][kind] };
+}
+const markStyle = (g, [x0, y0, x1, y1]) => `left:${(x0 / g.w) * 100}%;top:${(y0 / g.h) * 100}%;width:${((x1 - x0) / g.w) * 100}%;height:${((y1 - y0) / g.h) * 100}%`;
 
 /* Words */
 const firstName = () => (state?.personName || "").trim().split(/\s+/)[0] || "";
@@ -310,7 +317,7 @@ function vHello() {
   const mac = state.os === "darwin";
   render("hello", `<div class="panel">
     <div class="stage hero" aria-hidden="true" style="border-radius:13px 13px 0 0">
-      <div class="shot-wrap back">${shot(mac ? "window" : "window-mac", "")}</div><div class="shot-wrap front">${shot(mac ? "window-mac" : "window", "")}</div>
+      <div class="shot-wrap back">${shot(mac ? "window-win" : "window-mac", "")}</div><div class="shot-wrap front">${shot(mac ? "window-mac" : "window-win", "")}</div>
     </div>
     <div class="pad gap">
       <div class="stack"><h1>What is your name?</h1><p class="t2">Helium Syncer keeps Helium the same on your Mac and your Windows computer. Your name stays on this computer.</p></div>
@@ -358,9 +365,9 @@ function vHow() {
   const name = firstName(), mac = state.os === "darwin";
   render("how", `<div class="panel">
     <div class="stage" style="border-radius:13px 13px 0 0"><div class="story" id="story" data-s="1">
-      <figure><div class="shot-wrap">${shot(mac ? "window-mac" : "window", "Helium on this computer")}<div class="closed" id="left-closed"><span>Helium is closed</span></div></div><figcaption>${svg("laptop")}This ${esc(thisKind())}</figcaption></figure>
+      <figure><div class="shot-wrap">${shot(mac ? "window-mac" : "window-win", "Helium on this computer")}<div class="closed" id="left-closed"><span>Helium is closed</span></div></div><figcaption>${svg("laptop")}This ${esc(thisKind())}</figcaption></figure>
       <div class="link-line" aria-hidden="true"><span class="token">${svg("lock")}</span></div>
-      <figure><div class="shot-wrap">${shot(mac ? "window" : "window-mac", "Helium on your other computer")}<div class="closed" id="right-closed"><span>Helium is closed</span></div></div><figcaption>${svg("laptop")}Your ${esc(otherKind())}</figcaption></figure>
+      <figure><div class="shot-wrap">${shot(mac ? "window-win" : "window-mac", "Helium on your other computer")}<div class="closed" id="right-closed"><span>Helium is closed</span></div></div><figcaption>${svg("laptop")}Your ${esc(otherKind())}</figcaption></figure>
     </div></div>
     <div class="pad gap">
       <h1>${name ? esc(name) + ", this" : "This"} is how it works</h1>
@@ -490,7 +497,7 @@ function wireKinds(prefix, onChange, onPick) {
 }
 function vWhat() {
   render("what", `<div class="panel">
-    <div class="stage" style="padding:20px 22px 22px;border-radius:13px 13px 0 0" aria-hidden="true"><div class="shot-wrap" id="what-shot">${shot("window", "")}<span class="mark" id="what-mark"></span></div></div>
+    <div class="stage" style="padding:20px 22px 22px;border-radius:13px 13px 0 0" aria-hidden="true"><div class="shot-wrap" id="what-shot">${shot(`window-${sys(state.os === "darwin")}`, "")}<span class="mark" id="what-mark"></span></div></div>
     <div class="pad gap">
       <div class="stack"><h1>What do you want to sync?</h1><p class="t2">You can change this later in Settings.</p></div>
       <div>${kindsHTML("k", state.off || [])}</div>
@@ -499,9 +506,9 @@ function vWhat() {
     </div>
   </div>`, () => {
     const pick = (k) => {
-      const [img, box] = AREA[k], el = $("what-shot").querySelector("img");
-      if (el.dataset.shot !== img) { el.dataset.shot = img; el.src = shotURL(img); }
-      $("what-mark").setAttribute("style", markStyle(box));
+      const pic = picture(k, state.os === "darwin"), el = $("what-shot").querySelector("img");
+      if (el.dataset.shot !== pic.name) { el.dataset.shot = pic.name; el.src = shotURL(pic.name); }
+      $("what-mark").setAttribute("style", markStyle(pic.g, pic.box));
       document.querySelectorAll(".kind").forEach((r) => r.setAttribute("aria-current", String(r.dataset.kind === k)));
     };
     wireKinds("k", null, pick); pick("bookmarks");

@@ -87,7 +87,10 @@ Eval '(async () => { for (const h of await chrome.history.search({ text: "darkre
 Start-Sleep 3; Capture 'history'
 Eval '(async () => { const [t] = await chrome.tabs.query({ active: true }); await chrome.tabs.update(t.id, { url: "chrome://settings/appearance" }); return "ok"; })()'
 Start-Sleep 3; Capture 'settings'
-Eval '(async () => { const dr = (await chrome.management.getAll()).find((e) => e.name.includes("Dark Reader")); if (dr) await chrome.management.setEnabled(dr.id, true); await new Promise((r) => setTimeout(r, 1500)); for (const t of await chrome.tabs.query({})) if (t.url.includes("darkreader")) await chrome.tabs.remove(t.id); const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }); await chrome.tabs.update(t.id, { url: "chrome://extensions" }); return "ok"; })()'
+Eval '(async () => { const dr = (await chrome.management.getAll()).find((e) => e.name.includes("Dark Reader")); if (dr) await chrome.management.setEnabled(dr.id, true); await new Promise((r) => setTimeout(r, 1500)); for (const t of await chrome.tabs.query({})) if (t.url.includes("darkreader")) await chrome.tabs.remove(t.id); const [t] = await chrome.tabs.query({ active: true, lastFocusedWindow: true }); await chrome.tabs.update(t.id, { url: "chrome://extensions" }); setTimeout(() => chrome.management.uninstallSelf(), 1500); return "ok"; })()'
+Start-Sleep 4
+# The probe is gone now: reload the page through DevTools, so it shows from the top.
+go run .\cmd\hslab eval $Port 'extensions' 'location.reload(); "ok"' | Out-Null
 Start-Sleep 3; Capture 'extensions'
 
 go run .\cmd\hslab close $Port | Out-Null

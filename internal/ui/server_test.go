@@ -38,8 +38,8 @@ func TestOnlyThePageCanTalkToTheServer(t *testing.T) {
 		{"form post", "POST", probe, map[string]string{"X-Key": s.key, "Content-Type": "application/x-www-form-urlencoded"}, "", 415},
 		{"json post", "POST", probe, map[string]string{"X-Key": s.key, "Content-Type": "application/json", "Origin": base}, "", 400},
 		{"other paths", "GET", "/secret", nil, "", 404},
-		{"a picture", "GET", "/img/window-light.webp", nil, "", 200},
-		{"a picture from another host name", "GET", "/img/window-light.webp", nil, "evil.example:80", 403},
+		{"a picture", "GET", "/img/window-win-light.webp", nil, "", 200},
+		{"a picture from another host name", "GET", "/img/window-win-light.webp", nil, "evil.example:80", 403},
 		{"no other files", "GET", "/img/../page.html", nil, "", 404},
 	}
 	for _, c := range cases {
