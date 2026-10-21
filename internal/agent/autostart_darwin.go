@@ -1,11 +1,13 @@
 package agent
 
 import (
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 const label = "com.aiwithrishabh.helium-syncer"
@@ -35,13 +37,13 @@ func SetAutostart(on bool) error {
 <plist version="1.0">
 <dict>
   <key>Label</key><string>%s</string>
-  <key>ProgramArguments</key><array><string>%s</string><string>agent</string></array>
+  <key>ProgramArguments</key><array>%s</array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-  <key>ProcessType</key><string>Background</string>
+  <key>ProcessType</key><string>Interactive</string>
 </dict>
 </plist>
-`, label, exe)
+`, label, plistArgs(append([]string{exe}, AutostartArgs...)))
 	if err := os.MkdirAll(filepath.Dir(plistPath()), 0o755); err != nil {
 		return err
 	}
@@ -53,6 +55,16 @@ func SetAutostart(on bool) error {
 		return fmt.Errorf("launchctl: %v: %s", err, out)
 	}
 	return nil
+}
+
+func plistArgs(args []string) string {
+	var b strings.Builder
+	for _, a := range args {
+		b.WriteString("<string>")
+		xml.EscapeText(&b, []byte(a))
+		b.WriteString("</string>")
+	}
+	return b.String()
 }
 
 // Autostart reports whether start-at-login is on.
@@ -67,7 +79,7 @@ func StartDetached() error {
 	if err != nil {
 		return err
 	}
-	return exec.Command(exe, "agent").Start()
+	return exec.Command(exe, AutostartArgs...).Start()
 }
 
 // LaunchHelium opens Helium by its bundle id (wherever it is installed).

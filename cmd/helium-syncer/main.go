@@ -314,7 +314,7 @@ func runUI(noOpen bool) error {
 		if lock, err := agent.Lock(); err == nil {
 			defer lock.Close()
 			if a, err := agent.New(); err == nil {
-				s.Agent = a
+				s.SetAgent(a)
 				go a.Run(ctx)
 			}
 		}

@@ -36,13 +36,19 @@ var files embed.FS
 
 // Server is the local UI.
 type Server struct {
-	Agent     *agent.Agent // nil until connected
-	OnChange  func()       // e.g. refresh the tray title
+	OnChange  func() // e.g. refresh the tray title
 	key       string
 	addr      string
 	mu        sync.Mutex
-	freshCode string // shown once after "start", until the user confirms
+	ag        *agent.Agent // nil until connected
+	freshCode string       // shown once after "start", until the user confirms
 }
+
+// SetAgent hands the running background sync to the page.
+func (s *Server) SetAgent(a *agent.Agent) { s.mu.Lock(); s.ag = a; s.mu.Unlock() }
+
+// Agent is the running background sync, or nil.
+func (s *Server) Agent() *agent.Agent { s.mu.Lock(); defer s.mu.Unlock(); return s.ag }
 
 // Start listens on a free local port and returns the URL to open.
 func (s *Server) Start() (string, error) {
@@ -178,8 +184,8 @@ func (s *Server) state() (stateView, error) {
 			v.Profiles = append(v.Profiles, profileView{p.Dir, p.Name, synced, profileEmpty(cfg.UserData, p.Dir)})
 		}
 	}
-	if s.Agent != nil {
-		st := s.Agent.Status.Snapshot()
+	if ag := s.Agent(); ag != nil {
+		st := ag.Status.Snapshot()
 		v.Syncing, v.Paused = st.Syncing, st.Paused
 		if st.LastError != "" {
 			v.LastError = st.LastError
@@ -322,9 +328,9 @@ func (s *Server) api(r *http.Request) (any, error) {
 		return engine.DryRun(ctx, ec)
 
 	case "POST /api/sync":
-		if s.Agent != nil {
+		if ag := s.Agent(); ag != nil {
 			select {
-			case s.Agent.Trigger <- struct{}{}:
+			case ag.Trigger <- struct{}{}:
 			default:
 			}
 			return s.state()

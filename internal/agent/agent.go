@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -36,6 +37,10 @@ const LockAddr = "127.0.0.1:47811"
 
 // ErrNotSetUp means the first-sync preview has not been approved yet.
 var ErrNotSetUp = errors.New("setup is not finished: approve the first-sync preview in Helium Syncer")
+
+// AutostartArgs are the arguments start-at-login and StartDetached pass to
+// this program. The command line runs "agent"; the app runs itself hidden.
+var AutostartArgs = []string{"agent"}
 
 // ErrAlreadyRunning means another agent holds the lock.
 var ErrAlreadyRunning = errors.New("Helium Syncer is already running in the background")
@@ -93,7 +98,7 @@ func New() (*Agent, error) {
 		if err != nil {
 			return engine.Report{}, err
 		}
-		if !c.SetupDone {
+		if !c.Connected() || !c.SetupDone {
 			// Never sync before the person approved the first-sync preview.
 			return engine.Report{}, ErrNotSetUp
 		}
@@ -131,6 +136,41 @@ func Lock() (net.Listener, error) {
 		return nil, ErrAlreadyRunning
 	}
 	return l, nil
+}
+
+// ServeShow answers "show your window" from a second copy of the app, on
+// the lock port. Websites cannot send the custom header without a CORS
+// preflight, which is refused, so they cannot trigger it.
+func ServeShow(l net.Listener, show func()) error {
+	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/show" || r.Host != LockAddr || r.Header.Get("X-Helium-Syncer") != "show" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		show()
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	return srv.Serve(l)
+}
+
+// AskToShow asks the copy that holds the lock to show its window. It fails
+// when that copy is the command-line agent, which has no window.
+func AskToShow() error {
+	req, err := http.NewRequest(http.MethodPost, "http://"+LockAddr+"/show", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Helium-Syncer", "show")
+	c := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	res, err := c.Do(req)
+	if err != nil {
+		return err
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("the running copy answered %d", res.StatusCode)
+	}
+	return nil
 }
 
 // Run loops until ctx ends.

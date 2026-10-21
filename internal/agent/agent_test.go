@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -127,4 +128,47 @@ func TestAgentWaitsForSetup(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// A second copy of the app asks the first to show its window; websites
+// and other requests cannot.
+func TestShowHandoff(t *testing.T) {
+	l, err := Lock()
+	if err != nil {
+		t.Skip("lock port busy on this machine:", err)
+	}
+	defer l.Close()
+	shown := make(chan struct{}, 4)
+	go ServeShow(l, func() { shown <- struct{}{} })
+	if err := AskToShow(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-shown:
+	case <-time.After(2 * time.Second):
+		t.Fatal("window was not shown")
+	}
+	for _, h := range []map[string]string{{}, {"X-Helium-Syncer": "nope"}} {
+		req, _ := http.NewRequest(http.MethodPost, "http://"+LockAddr+"/show", nil)
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("request without the header got %d", res.StatusCode)
+		}
+	}
+	req, _ := http.NewRequest(http.MethodPost, "http://"+LockAddr+"/show", nil)
+	req.Header.Set("X-Helium-Syncer", "show")
+	req.Host = "evil.example"
+	if res, err := http.DefaultClient.Do(req); err != nil || res.StatusCode != http.StatusForbidden {
+		t.Fatalf("other host name must be refused: %v %v", err, res)
+	}
+	if len(shown) != 0 {
+		t.Fatal("a refused request showed the window")
+	}
 }

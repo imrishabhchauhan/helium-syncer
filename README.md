@@ -63,12 +63,21 @@ On macOS, "quit" means **Cmd+Q**, not just closing the window.
 ## Roadmap
 
 - [x] **Phase 0:** read and write every Helium data type safely on test profiles (Windows + macOS)
-- [ ] **Phase 1:** sync code + encryption, server, profiles, bookmarks, history, tabs, pinned tabs, tab groups, settings (engine and server done; app in progress)
+- [ ] **Phase 1:** sync code + encryption, server, profiles, bookmarks, history, tabs, pinned tabs, tab groups, settings (engine, server, setup window and tray / menu-bar app done; real-device testing in progress)
 - [ ] **Phase 2:** extensions and extension data
 - [ ] **Phase 3:** opt-in logins per site
 - [ ] **Phase 4:** signed installers, auto-update, self-host guide
 
 The full design is in [docs/01-spec.md](docs/01-spec.md).
+
+## Build it yourself
+
+There are no downloads yet. To try it, install [Go](https://go.dev/dl/) and build:
+
+- **macOS** (also needs `xcode-select --install`): `sh scripts/build-app.sh` makes `bin/Helium Syncer.app`. It lives in the menu bar.
+- **Windows:** `powershell -ExecutionPolicy Bypass -File scripts/build-app.ps1` makes `bin\Helium Syncer.exe`. It lives in the tray, next to the clock.
+
+Open it, follow the steps, and approve the preview before the first sync. Power users also get a command-line tool (`helium-syncer help`).
 
 ## Help with testing
 

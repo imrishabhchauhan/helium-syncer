@@ -20,7 +20,7 @@ func StartDetached() error {
 	if err != nil {
 		return err
 	}
-	return exec.Command(exe, "agent").Start()
+	return exec.Command(exe, AutostartArgs...).Start()
 }
 
 // LaunchHelium opens Helium.

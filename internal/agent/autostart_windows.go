@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/windows/registry"
@@ -30,7 +31,7 @@ func SetAutostart(on bool) error {
 	if err != nil {
 		return err
 	}
-	return k.SetStringValue(runValue, `"`+exe+`" agent`)
+	return k.SetStringValue(runValue, `"`+exe+`" `+strings.Join(AutostartArgs, " "))
 }
 
 // Autostart reports whether start-at-login is on.
@@ -50,7 +51,7 @@ func StartDetached() error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, "agent")
+	cmd := exec.Command(exe, AutostartArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008} // DETACHED_PROCESS
 	return cmd.Start()
 }
