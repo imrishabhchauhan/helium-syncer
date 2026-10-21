@@ -33,7 +33,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
 )
 
-//go:embed page.html
+//go:embed page.html img/*.webp
 var files embed.FS
 
 // Server is the local UI.
@@ -86,6 +86,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		data, _ := files.ReadFile("page.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		w.Write(data)
+		return
+	}
+	if name, ok := strings.CutPrefix(r.URL.Path, "/img/"); ok && r.Method == http.MethodGet {
+		// Real Helium pictures for the setup screens (not secret).
+		data, err := files.ReadFile("img/" + name)
+		if err != nil || strings.Contains(name, "/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "image/webp")
+		w.Header().Set("Cache-Control", "max-age=86400")
 		w.Write(data)
 		return
 	}
