@@ -113,6 +113,37 @@ First setup:
 - Format guard: each reader/writer is pinned to known Helium/Chromium schema versions; unknown version → that data type pauses and the app warns, never guesses.
 - Dry-run + diff view available for every apply.
 
+## 4b. Laptops, compatibility and per-item switches (21 Oct 2026)
+
+- **Battery modes** (`app.Config.Battery`, default `balanced`):
+  - *balanced*: Helium check every 5 s plugged in / 15 s on battery; pull every 5 min plugged in, every 30 min on battery; on low battery (20 % or less) or Battery Saver / Low Power Mode, no pulls, only the sync after Helium quits.
+  - *plugged*: on battery nothing runs; changes wait until power returns.
+  - *always*: same as plugged in.
+  - "Sync now" always runs.
+  - A sync runs at background priority (Windows background mode, macOS darwin-bg band). The Windows app also asks for EcoQoS.
+  - Measured idle cost on Windows 11: about 1 s CPU per hour, about 21 MB memory.
+- **Compatibility:** release builds use Go 1.26 (macOS 12+, Windows 10+). Go 1.27 needs macOS 13.
+  - One self-contained binary per OS and architecture (Windows x64/ARM64, macOS universal).
+  - No PowerShell, admin rights or other software needed at run time.
+- **Per-item switches** (`engine.Config.Off`): bookmarks, history, tabs, settings, extensions.
+  - When an item is off, its Helium files are not read or written and local changes are not sent.
+  - Incoming ops are still merged into the encrypted state, so switching the item on again loses nothing.
+  - Profiles are always on.
+- **Write guard:** Helium Syncer checks that Helium is closed right before every write to Helium's folder. If it is open, the run stops and rolls back.
+- **Same profile name on both computers:** the added profile gets a local-only ending, such as "Personal (2)" (`State.ProfileSuffix`). The synced name stays plain. The ending goes away when the names no longer clash.
+- **Onboarding:**
+  1. Person's name (kept local).
+  2. Animated 3-step example.
+  3. First computer or join.
+  4. Sync code.
+  5. Items to sync.
+  6. Profiles.
+  7. Battery mode (laptops only).
+  8. Preview.
+  9. Done.
+
+  Helium missing → install screen with a manual folder picker. All UI and README copy follows ASD-STE100.
+
 ## 5. Architecture
 
 - **Helper app** (Windows + macOS): Go, single binary, no CGO (`modernc.org/sqlite`, `syndtr/goleveldb`). UI via Wails (tray/menu bar + onboarding). Background agent at login (Windows Task Scheduler / macOS LaunchAgent). Launcher shortcut for the "last check on open".

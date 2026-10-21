@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
+	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 )
 
 // fake drives the loop with a scripted "is Helium open" timeline.
@@ -170,5 +171,119 @@ func TestShowHandoff(t *testing.T) {
 	}
 	if len(shown) != 0 {
 		t.Fatal("a refused request showed the window")
+	}
+}
+
+type powerBox struct {
+	mu sync.Mutex
+	s  power.State
+}
+
+func (p *powerBox) set(s power.State) { p.mu.Lock(); p.s = s; p.mu.Unlock() }
+func (p *powerBox) get() power.State  { p.mu.Lock(); defer p.mu.Unlock(); return p.s }
+
+var (
+	pluggedIn  = power.State{HasBattery: true, Percent: 80}
+	onBattery  = power.State{HasBattery: true, OnBattery: true, Percent: 70}
+	lowBattery = power.State{HasBattery: true, OnBattery: true, Percent: 15}
+)
+
+func count(f *fake) int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.syncs) }
+
+// batteryAgent re-reads the power state on every check (no 1-minute cache).
+func batteryAgent(f *fake, pb *powerBox, mode string) *Agent {
+	a := newTestAgent(f)
+	a.Timing.WhileClosed = 40 * time.Millisecond
+	a.Timing.WhileClosedBattery = 10 * time.Second
+	a.Power = pb.get
+	a.Mode = func() string { return mode }
+	a.Now = func() time.Time { a.pwRead = time.Time{}; return time.Now() }
+	return a
+}
+
+func runFor(a *Agent, d time.Duration, during func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	if during != nil {
+		during()
+	}
+	time.Sleep(d)
+	cancel()
+	<-done
+}
+
+func TestBatteryPullsLessOften(t *testing.T) {
+	f, pb := &fake{}, &powerBox{s: onBattery}
+	runFor(batteryAgent(f, pb, BatteryBalanced), 400*time.Millisecond, nil)
+	if n := count(f); n != 1 {
+		t.Fatalf("on battery: %d syncs in 400 ms, want only the first one", n)
+	}
+	f2, pb2 := &fake{}, &powerBox{s: pluggedIn}
+	runFor(batteryAgent(f2, pb2, BatteryBalanced), 400*time.Millisecond, nil)
+	if n := count(f2); n < 4 {
+		t.Fatalf("plugged in: only %d syncs in 400 ms", n)
+	}
+	f3, pb3 := &fake{}, &powerBox{s: onBattery}
+	runFor(batteryAgent(f3, pb3, BatteryAlways), 400*time.Millisecond, nil)
+	if n := count(f3); n < 4 {
+		t.Fatalf("mode always on battery: only %d syncs in 400 ms", n)
+	}
+}
+
+func TestLowBatteryStillSendsAfterQuit(t *testing.T) {
+	f, pb := &fake{open: true}, &powerBox{s: lowBattery}
+	a := batteryAgent(f, pb, BatteryBalanced)
+	a.Timing.WhileClosedBattery = 40 * time.Millisecond // so only the low-battery rule can stop pulls
+	runFor(a, 500*time.Millisecond, func() {
+		time.Sleep(60 * time.Millisecond)
+		f.setOpen(false)
+	})
+	if n := count(f); n != 1 {
+		t.Fatalf("low battery: %d syncs, want exactly the one after quit", n)
+	}
+}
+
+func TestPluggedModeWaitsForPower(t *testing.T) {
+	f, pb := &fake{open: true}, &powerBox{s: onBattery}
+	a := batteryAgent(f, pb, BatteryPlugged)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	time.Sleep(40 * time.Millisecond)
+	f.setOpen(false)
+	time.Sleep(250 * time.Millisecond)
+	if n := count(f); n != 0 {
+		t.Fatalf("plugged-only mode on battery synced %d time(s)", n)
+	}
+	if st := a.Status.Snapshot(); st.PowerNote == "" {
+		t.Fatal("no note that the sync waits for power")
+	}
+	select { // a person presses Sync now: do it anyway
+	case a.Trigger <- struct{}{}:
+	default:
+	}
+	time.Sleep(80 * time.Millisecond)
+	if n := count(f); n != 1 {
+		t.Fatalf("Sync now on battery: %d syncs, want 1", n)
+	}
+	f.setOpen(true)
+	time.Sleep(40 * time.Millisecond)
+	f.setOpen(false)
+	time.Sleep(150 * time.Millisecond)
+	if n := count(f); n != 1 {
+		t.Fatalf("second quit on battery synced: %d", n)
+	}
+	pb.set(pluggedIn) // plugged in: the waiting changes go out
+	time.Sleep(150 * time.Millisecond)
+	cancel()
+	<-done
+	if n := count(f); n < 2 {
+		t.Fatalf("after plugging in: %d syncs, want the waiting one", n)
+	}
+	for i, s := range f.syncs {
+		if s == "OPEN" {
+			t.Fatalf("sync %d ran while Helium was open", i)
+		}
 	}
 }

@@ -22,9 +22,11 @@ type State struct {
 	Clock    crdt.Stamp `json:"clock"`
 	Cursor   string     `json:"cursor"`
 
-	Links        merge.ProfileLinks         `json:"links"`
-	ProfilesBase map[string]json.RawMessage `json:"profiles_base"`
-	ProfilesMap  *crdt.Map                  `json:"profiles_map"`
+	Links merge.ProfileLinks `json:"links"`
+	// Local-only name endings, e.g. "Profile 2" -> " (2)" (see SyncProfiles).
+	ProfileSuffix map[string]string          `json:"profile_suffix,omitempty"`
+	ProfilesBase  map[string]json.RawMessage `json:"profiles_base"`
+	ProfilesMap   *crdt.Map                  `json:"profiles_map"`
 
 	Profiles map[string]*ProfileState `json:"profiles"` // by synced profile id
 

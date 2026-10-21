@@ -3,6 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -365,4 +366,126 @@ func TestOnlyOneSyncAtATime(t *testing.T) {
 		t.Fatalf("a stale lock must be taken over: %v", err)
 	}
 	u3()
+}
+
+// A kind switched off on one computer: its Helium file stays exactly as it
+// is, its local changes stay local, and nothing is lost when it is switched
+// on again.
+func TestKindSwitchedOffKeepsChangesForLater(t *testing.T) {
+	ctx := context.Background()
+	server := NewMemory()
+	macUD, winUD := fakeUserData(t, ver), fakeUserData(t, ver)
+	mac, win := cfgFor(t, "mac", macUD, server), cfgFor(t, "win", winUD, server)
+	LinkProfile(mac.StateDir, mac.DeviceID, "Default")
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, win); err != nil { // adds the Mac's profile as "Profile 1"
+		t.Fatal(err)
+	}
+	winBM := filepath.Join(winUD, "Profile 1", "Bookmarks")
+
+	win.Off = map[string]bool{KindBookmarks: true}
+	addBookmark(t, macUD, "frommac", "From the Mac")
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(winBM)
+	if _, err := Run(ctx, win); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(winBM); !bytes.Equal(before, after) {
+		t.Fatal("bookmarks are off on Windows, but its Bookmarks file changed")
+	}
+	// A change made on Windows while off stays on Windows.
+	f, _ := bookmarks.Load(winBM)
+	bar := f.Root("bookmark_bar")
+	bar["children"] = append(bar["children"].([]any), map[string]any{"id": "200", "guid": "fromwin", "name": "From Windows",
+		"type": "url", "url": "https://fromwin.example/", "date_added": "1"})
+	f.Save(winBM)
+	if _, err := Run(ctx, win); err != nil {
+		t.Fatal(err)
+	}
+	Run(ctx, mac)
+	if got := titles(t, macUD, "Default"); strings.Contains(got, "From Windows") {
+		t.Fatalf("a bookmark made while bookmarks were off was sent: %s", got)
+	}
+
+	// Switched on again: both changes arrive, nothing is lost.
+	win.Off = nil
+	if _, err := Run(ctx, win); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(t, winUD, "Profile 1"); !strings.Contains(got, "From the Mac") || !strings.Contains(got, "From Windows") {
+		t.Fatalf("after switching on, Windows has: %s", got)
+	}
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(t, macUD, "Default"); !strings.Contains(got, "From Windows") || !strings.Contains(got, "From the Mac") {
+		t.Fatalf("after switching on, the Mac has: %s", got)
+	}
+}
+
+// A person opens Helium in the middle of a sync, at each possible moment:
+// the sync stops before the next write and puts back what it wrote.
+func TestHeliumOpenedDuringSyncChangesNothing(t *testing.T) {
+	ctx := context.Background()
+	snapshot := func(ud string) map[string]string {
+		out := map[string]string{}
+		filepath.Walk(ud, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() {
+				b, _ := os.ReadFile(p)
+				rel, _ := filepath.Rel(ud, p)
+				out[rel] = string(b)
+			}
+			return nil
+		})
+		return out
+	}
+	covered := 0
+	for openAt := 2; openAt <= 12; openAt++ {
+		server := NewMemory()
+		macUD, winUD := fakeUserData(t, ver), fakeUserData(t, ver)
+		mac, win := cfgFor(t, "mac", macUD, server), cfgFor(t, "win", winUD, server)
+		LinkProfile(mac.StateDir, mac.DeviceID, "Default")
+		addBookmark(t, macUD, "frommac", "From the Mac")
+		if _, err := Run(ctx, mac); err != nil {
+			t.Fatal(err)
+		}
+		before := snapshot(winUD)
+		calls := 0
+		win.Running = func(string) (bool, error) { calls++; return calls >= openAt, nil }
+		_, err := Run(ctx, win)
+		if calls < openAt {
+			break // every write point is covered
+		}
+		covered++
+		if !errors.Is(err, ErrHeliumRunning) {
+			t.Fatalf("Helium opened at check %d: got %v, want ErrHeliumRunning", openAt, err)
+		}
+		after := snapshot(winUD)
+		for f, b := range before {
+			if after[f] != b {
+				t.Fatalf("Helium opened at check %d: %s changed", openAt, f)
+			}
+		}
+		for f := range after {
+			if _, ok := before[f]; !ok {
+				t.Fatalf("Helium opened at check %d: %s was left behind", openAt, f)
+			}
+		}
+		// Helium closes again: the next sync completes normally.
+		win.Running = nil
+		if _, err := Run(ctx, win); err != nil {
+			t.Fatalf("after Helium closed again (check %d): %v", openAt, err)
+		}
+		if got := titles(t, winUD, "Profile 1"); !strings.Contains(got, "From the Mac") {
+			t.Fatalf("after Helium closed again (check %d): %s", openAt, got)
+		}
+	}
+	t.Logf("Helium opened at %d different moments", covered)
+	if covered < 3 { // profiles, settings and bookmarks are written in this test
+		t.Fatalf("only %d moments tested", covered)
+	}
 }

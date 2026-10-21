@@ -4,6 +4,8 @@
 #   helium-syncer.exe          command-line tool
 #   arm64\...                  the same for Windows on ARM
 $ErrorActionPreference = 'Stop'
+# The same Go version as the macOS build (Go 1.26: Windows 10 and 11).
+if (-not $env:GOTOOLCHAIN) { $env:GOTOOLCHAIN = 'go1.26.10' }
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
 foreach ($arch in 'amd64', 'arm64') {

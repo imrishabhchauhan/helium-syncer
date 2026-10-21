@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/detect"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
+	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
 )
@@ -42,6 +44,9 @@ type Server struct {
 	mu        sync.Mutex
 	ag        *agent.Agent // nil until connected
 	freshCode string       // shown once after "start", until the user confirms
+	pw        power.State
+	pwAt      time.Time
+	lastRep   *engine.Report // the last sync this window ran itself
 }
 
 // SetAgent hands the running background sync to the page.
@@ -76,7 +81,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'none'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'")
 	if r.URL.Path == "/" {
 		data, _ := files.ReadFile("page.html")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -152,10 +157,29 @@ type stateView struct {
 	FreshCode   string         `json:"freshCode,omitempty"`
 	AppVersion  string         `json:"appVersion"`
 	LastReport  *engine.Report `json:"lastReport,omitempty"`
+	PersonName  string         `json:"personName"`
+	OS          string         `json:"os"` // windows, darwin, linux
+	HeliumDir   string         `json:"heliumDir"`
+	Kinds       []string       `json:"kinds"` // every kind, in order
+	Off         []string       `json:"off"`   // kinds switched off here
+	Battery     string         `json:"battery"`
+	HasBattery  bool           `json:"hasBattery"`
+	OnBattery   bool           `json:"onBattery"`
+	PowerNote   string         `json:"powerNote,omitempty"`
+}
+
+// powerState is read at most once a minute (on macOS it starts pmset).
+func (s *Server) powerState() power.State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pwAt.IsZero() || time.Since(s.pwAt) > time.Minute {
+		s.pw, s.pwAt = power.Read(), time.Now()
+	}
+	return s.pw
 }
 
 func (s *Server) state() (stateView, error) {
-	cfg, err := app.Load()
+	cfg, err := app.LoadCached()
 	if err != nil {
 		return stateView{}, err
 	}
@@ -164,11 +188,18 @@ func (s *Server) state() (stateView, error) {
 			cfg.UserData = found[0].UserData
 		}
 	}
-	if cfg.DeviceName == "" {
-		cfg.DeviceName = app.DefaultDeviceName()
+	if cfg.DeviceName == "" || (!cfg.Connected() && cfg.DeviceName == app.DefaultDeviceName("")) {
+		cfg.DeviceName = app.DefaultDeviceName(cfg.PersonName)
+	}
+	pw := s.powerState()
+	battery := cfg.Battery
+	if battery == "" {
+		battery = agent.BatteryBalanced
 	}
 	v := stateView{Connected: cfg.Connected(), DeviceName: cfg.DeviceName, RestoreTabs: cfg.RestoreTabs, SetupDone: cfg.SetupDone,
-		Autostart: agent.Autostart(), AppVersion: app.Version, LastError: cfg.LastError}
+		Autostart: agent.Autostart(), AppVersion: app.Version, LastError: cfg.LastError,
+		PersonName: cfg.PersonName, OS: runtime.GOOS, HeliumDir: cfg.UserData, Kinds: engine.Kinds, Off: append([]string{}, cfg.Off...),
+		Battery: battery, HasBattery: pw.HasBattery, OnBattery: pw.OnBattery}
 	if !cfg.LastSync.IsZero() {
 		v.LastSync = cfg.LastSync.UnixMilli()
 	}
@@ -186,7 +217,7 @@ func (s *Server) state() (stateView, error) {
 	}
 	if ag := s.Agent(); ag != nil {
 		st := ag.Status.Snapshot()
-		v.Syncing, v.Paused = st.Syncing, st.Paused
+		v.Syncing, v.Paused, v.PowerNote = st.Syncing, st.Paused, st.PowerNote
 		if st.LastError != "" {
 			v.LastError = st.LastError
 		}
@@ -198,6 +229,10 @@ func (s *Server) state() (stateView, error) {
 	}
 	s.mu.Lock()
 	v.FreshCode = s.freshCode
+	if v.LastReport == nil && s.lastRep != nil {
+		rep := *s.lastRep
+		v.LastReport = &rep
+	}
 	s.mu.Unlock()
 	return v, nil
 }
@@ -228,7 +263,7 @@ func (s *Server) api(r *http.Request) (any, error) {
 		}
 	}
 	if cfg.DeviceName == "" {
-		cfg.DeviceName = app.DefaultDeviceName()
+		cfg.DeviceName = app.DefaultDeviceName(cfg.PersonName)
 	}
 	switch r.Method + " " + r.URL.Path {
 	case "GET /api/state":
@@ -343,19 +378,72 @@ func (s *Server) api(r *http.Request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		cfg.LastSync = time.Now()
+		cfg.LastSync, cfg.LastError = time.Now(), ""
 		cfg.Save()
+		s.mu.Lock()
+		s.lastRep = &rep
+		s.mu.Unlock()
 		return rep, nil
 
 	case "POST /api/settings":
 		var in struct {
-			Autostart   *bool   `json:"autostart"`
-			RestoreTabs *bool   `json:"restoreTabs"`
-			SetupDone   *bool   `json:"setupDone"`
-			Name        *string `json:"name"`
+			Autostart   *bool     `json:"autostart"`
+			RestoreTabs *bool     `json:"restoreTabs"`
+			SetupDone   *bool     `json:"setupDone"`
+			Name        *string   `json:"name"`
+			PersonName  *string   `json:"personName"`
+			Battery     *string   `json:"battery"`
+			Off         *[]string `json:"off"`
+			HeliumDir   *string   `json:"heliumDir"`
 		}
 		if err := decode(r, &in); err != nil {
 			return nil, err
+		}
+		if in.PersonName != nil {
+			n := strings.TrimSpace(*in.PersonName)
+			if len([]rune(n)) > 40 {
+				return nil, errors.New("Type a name of 40 letters or less.")
+			}
+			// The computer name follows the person's name until they change it.
+			if cfg.DeviceName == "" || cfg.DeviceName == app.DefaultDeviceName(cfg.PersonName) || !cfg.Connected() {
+				cfg.DeviceName = app.DefaultDeviceName(n)
+			}
+			cfg.PersonName = n
+		}
+		if in.Battery != nil {
+			switch *in.Battery {
+			case agent.BatteryBalanced, agent.BatteryPlugged, agent.BatteryAlways:
+				cfg.Battery = *in.Battery
+			default:
+				return nil, errors.New("unknown battery mode")
+			}
+		}
+		if in.Off != nil {
+			known := map[string]bool{}
+			for _, k := range engine.Kinds {
+				known[k] = true
+			}
+			var off []string
+			for _, k := range *in.Off {
+				if !known[k] {
+					return nil, fmt.Errorf("unknown kind %q", k)
+				}
+				off = append(off, k)
+			}
+			if len(off) == len(engine.Kinds) {
+				return nil, errors.New("Keep at least one item on. To stop all sync, use Leave this sync.")
+			}
+			cfg.Off = off
+		}
+		if in.HeliumDir != nil {
+			if cfg.Connected() && cfg.SetupDone {
+				return nil, errors.New("Leave this sync first, then choose a different Helium folder.")
+			}
+			found, ok := detect.Inspect(strings.TrimSpace(*in.HeliumDir))
+			if !ok {
+				return nil, errors.New("No Helium data is in that folder. Find the folder that contains the file \"Local State\".")
+			}
+			cfg.UserData = found.UserData
 		}
 		if in.Autostart != nil {
 			if err := agent.SetAutostart(*in.Autostart); err != nil {
@@ -400,6 +488,15 @@ func (s *Server) api(r *http.Request) (any, error) {
 			return nil, err
 		}
 		return map[string]bool{"removed": true}, cl.Remove(ctx, in.ID)
+
+	case "POST /api/disconnect":
+		if err := cfg.Disconnect(); err != nil {
+			return nil, err
+		}
+		s.mu.Lock()
+		s.freshCode = ""
+		s.mu.Unlock()
+		return s.state()
 
 	case "POST /api/open-helium":
 		return map[string]bool{"ok": true}, agent.LaunchHelium()

@@ -115,6 +115,9 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 		if err := saveFolders(id); err != nil {
 			return nil, err
 		}
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		if err := extensions.InstallPackage(dir, id, pkg, cfg.MachineID, cfg.GOOS); err != nil {
 			return nil, fmt.Errorf("installing extension %s: %w", it.Name, err)
 		}
@@ -125,6 +128,9 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 		if err := saveFolders(id); err != nil {
 			return nil, err
 		}
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		if err := extensions.Remove(dir, id, cfg.MachineID); err != nil {
 			return nil, err
 		}
@@ -132,12 +138,18 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 		changed = true
 	}
 	for _, id := range plan.Enable {
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		if err := extensions.SetEnabled(dir, id, true, cfg.MachineID); err != nil {
 			return nil, err
 		}
 		changed = true
 	}
 	for _, id := range plan.Disable {
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		if err := extensions.SetEnabled(dir, id, false, cfg.MachineID); err != nil {
 			return nil, err
 		}
@@ -157,6 +169,9 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 			return nil, fmt.Errorf("downloading extension data: %w", err)
 		}
 		if err := saveFolders(id); err != nil {
+			return nil, err
+		}
+		if err := closed(cfg); err != nil {
 			return nil, err
 		}
 		if err := extensions.ReplaceData(dir, id, data); err != nil {

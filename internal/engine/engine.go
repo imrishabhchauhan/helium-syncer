@@ -44,8 +44,52 @@ type Config struct {
 	Transport  Transport
 	// RestoreTabs turns on "Continue where you left off" so synced tabs open.
 	RestoreTabs bool
-	Now         func() time.Time
-	GOOS        string // target OS file conventions; default runtime.GOOS
+	// Off lists the kinds (Kind*) this computer does not sync. Their Helium
+	// files are not read or written and local changes are not sent; changes
+	// from other computers are kept, and arrive when the kind is on again.
+	Off  map[string]bool
+	Now  func() time.Time
+	GOOS string // target OS file conventions; default runtime.GOOS
+	// Running reports whether Helium is open; default helium.IsRunning.
+	// Tests replace it to open Helium in the middle of a sync.
+	Running func(userData string) (bool, error)
+}
+
+// closed is checked right before each write into Helium's folder: if a
+// person opens Helium during a sync, the sync stops and is rolled back.
+func closed(cfg Config) error {
+	is := cfg.Running
+	if is == nil {
+		is = helium.IsRunning
+	}
+	running, err := is(cfg.UserData)
+	if err != nil {
+		return err
+	}
+	if running {
+		return ErrHeliumRunning
+	}
+	return nil
+}
+
+// Kinds of data a person can switch off per computer.
+const (
+	KindBookmarks  = "bookmarks"
+	KindHistory    = "history"
+	KindTabs       = "tabs" // open, pinned and grouped tabs
+	KindSettings   = "settings"
+	KindExtensions = "extensions"
+)
+
+// Kinds lists every kind, in the order the app shows them.
+var Kinds = []string{KindBookmarks, KindHistory, KindTabs, KindSettings, KindExtensions}
+
+// keep stores ops from other computers without touching Helium's files.
+func keep(clock *crdt.Clock, ops []crdt.Op, into func(crdt.Op) *crdt.Map) {
+	for _, op := range ops {
+		clock.Observe(op.Stamp)
+		into(op).Apply(op)
+	}
 }
 
 // Report says what a run did, for the status line and logs.
@@ -82,10 +126,8 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 	defer unlock()
-	if running, err := helium.IsRunning(cfg.UserData); err != nil {
+	if err := closed(cfg); err != nil {
 		return rep, err
-	} else if running {
-		return rep, ErrHeliumRunning
 	}
 
 	// 1. Finish or undo an interrupted previous run.
@@ -242,7 +284,13 @@ func apply(ctx context.Context, cfg Config, st *State, clock *crdt.Clock, incomi
 	for d := range st.Links {
 		before[d] = true
 	}
-	base, pOut, plan, err := merge.SyncProfiles(cfg.UserData, st.Links, st.ProfilesBase, st.ProfilesMap, clock, profileOps,
+	if st.ProfileSuffix == nil {
+		st.ProfileSuffix = map[string]string{}
+	}
+	if err := closed(cfg); err != nil {
+		return nil, nil, err
+	}
+	base, pOut, plan, err := merge.SyncProfiles(cfg.UserData, st.Links, st.ProfileSuffix, st.ProfilesBase, st.ProfilesMap, clock, profileOps,
 		func(i int) int { return 26 + i%30 })
 	if err != nil {
 		return nil, nil, err
@@ -340,9 +388,13 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 			chromejson.Set(secure, "session.restore_on_startup", one)
 		}
 	}
-	base, ops, _ := merge.SyncSettings(prefs, ps.SettingsBase, ps.Settings, clock, byType[merge.TypeSetting], cfg.MachineID)
-	ps.SettingsBase = base
-	out = append(out, ops...)
+	if cfg.Off[KindSettings] {
+		keep(clock, byType[merge.TypeSetting], func(crdt.Op) *crdt.Map { return ps.Settings })
+	} else {
+		base, ops, _ := merge.SyncSettings(prefs, ps.SettingsBase, ps.Settings, clock, byType[merge.TypeSetting], cfg.MachineID)
+		ps.SettingsBase = base
+		out = append(out, ops...)
+	}
 	if chromejson.Compact(secure) != origSecure || !exists(securePath) {
 		// Anything we changed in the protected file must carry a valid MAC
 		// for this device, or Helium resets it.
@@ -366,6 +418,9 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		if err := noteCreate(cfg, j, f.path); err != nil {
 			return nil, err
 		}
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		if err := writeAtomic(f.path, []byte(data)); err != nil {
 			return nil, err
 		}
@@ -373,41 +428,60 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 
 	// Bookmarks.
-	bmPath := filepath.Join(dir, "Bookmarks")
-	raw, err := os.ReadFile(bmPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		raw = []byte(emptyBookmarks)
-	} else if err != nil {
-		return nil, err
-	}
-	bf, err := bookmarks.Parse(raw)
-	if err != nil {
-		return nil, err
-	}
-	bf, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])
-	ps.BookmarksBase = bmBase
-	out = append(out, ops...)
-	if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
-		if err := noteCreate(cfg, j, bmPath); err != nil {
+	if cfg.Off[KindBookmarks] {
+		keep(clock, byType[merge.TypeBookmark], func(crdt.Op) *crdt.Map { return ps.Bookmarks })
+	} else {
+		bmPath := filepath.Join(dir, "Bookmarks")
+		raw, err := os.ReadFile(bmPath)
+		if errors.Is(err, fs.ErrNotExist) {
+			raw = []byte(emptyBookmarks)
+		} else if err != nil {
 			return nil, err
 		}
-		if err := writeAtomic(bmPath, enc); err != nil {
+		bf, err := bookmarks.Parse(raw)
+		if err != nil {
 			return nil, err
 		}
-		j.Written = append(j.Written, bmPath)
+		bf, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])
+		ps.BookmarksBase = bmBase
+		out = append(out, ops...)
+		if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
+			if err := noteCreate(cfg, j, bmPath); err != nil {
+				return nil, err
+			}
+			if err := closed(cfg); err != nil {
+				return nil, err
+			}
+			if err := writeAtomic(bmPath, enc); err != nil {
+				return nil, err
+			}
+			j.Written = append(j.Written, bmPath)
+		}
 	}
 
 	// Extensions (after settings: both live in Secure Preferences).
 	extOps := append(byType[merge.TypeExtension], byType[merge.TypeExtData]...)
-	ops, err = syncExtensions(ctx, cfg, ps, dir, clock, extOps, j)
-	if err != nil {
-		return nil, err
+	if cfg.Off[KindExtensions] {
+		keep(clock, extOps, func(op crdt.Op) *crdt.Map {
+			if op.Type == merge.TypeExtData {
+				return ps.ExtData
+			}
+			return ps.Exts
+		})
+	} else {
+		ops, err := syncExtensions(ctx, cfg, ps, dir, clock, extOps, j)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ops...)
 	}
-	out = append(out, ops...)
 
 	// History: only once Helium has created the database for this profile.
 	histOps := append(byType[merge.TypeVisit], byType[merge.TypeTitle]...)
-	if hp := filepath.Join(dir, "History"); exists(hp) {
+	if hp := filepath.Join(dir, "History"); exists(hp) && !cfg.Off[KindHistory] {
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		db, err := history.Open(hp)
 		if err != nil {
 			return nil, err
@@ -432,6 +506,16 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 
 	// Open tabs.
+	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
+	if cfg.Off[KindTabs] {
+		keep(clock, tabOps, func(op crdt.Op) *crdt.Map {
+			if op.Type == merge.TypeGroup {
+				return ps.GroupMap
+			}
+			return ps.TabMap
+		})
+		return out, nil
+	}
 	local := &sessions.Session{Groups: map[[2]uint64]*sessions.Group{}}
 	if latest, err := sessions.LatestFile(dir); err == nil {
 		if s, err := sessions.ReadFile(latest); err == nil {
@@ -447,12 +531,14 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		}
 		return t
 	}
-	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
 	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf)
 	out = append(out, ops...)
 	// Only rewrite the session when tabs arrived from another device; this
 	// device's own changes are already in Helium's file.
 	if len(tabOps) > 0 {
+		if err := closed(cfg); err != nil {
+			return nil, err
+		}
 		path, err := sessions.WriteNew(dir, projected)
 		if err != nil {
 			return nil, err

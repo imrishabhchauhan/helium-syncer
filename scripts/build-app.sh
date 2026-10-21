@@ -7,6 +7,9 @@ set -eu
 cd "$(dirname "$0")/.."
 
 VERSION="${VERSION:-0.1.0-dev}"
+# Go 1.26 still makes programs for macOS 12 Monterey; Go 1.27 needs macOS 13.
+# Go downloads this exact version by itself the first time.
+export GOTOOLCHAIN="${GOTOOLCHAIN:-go1.26.10}"
 APP="bin/Helium Syncer.app"
 MACOS="$APP/Contents/MacOS"
 TMP="$(mktemp -d)"
@@ -36,7 +39,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
-  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>MIT licence. Unofficial, not affiliated with Helium or imput.</string>

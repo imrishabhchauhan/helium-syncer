@@ -14,7 +14,8 @@ type View struct {
 	LastSync   time.Time
 	LastError  string
 	Paused     string
-	Elsewhere  bool // the command-line agent runs the sync, not this app
+	Elsewhere  bool   // the command-line agent runs the sync, not this app
+	PowerNote  string // the sync waits for power
 }
 
 // Line is the short status shown in the menu and tooltip, and whether it
@@ -31,6 +32,8 @@ func Line(v View, now time.Time) (text string, attention bool) {
 		return "Problem syncing · open Helium Syncer", true
 	case v.Paused != "":
 		return "Paused · open Helium Syncer", true
+	case v.PowerNote != "":
+		return "On battery · syncs when you plug in", false
 	case v.Elsewhere:
 		return "Syncing from the command-line agent", false
 	case v.HeliumOpen:

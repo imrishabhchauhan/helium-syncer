@@ -12,13 +12,16 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/cloud"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
+	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 	"github.com/imrishabhchauhan/helium-syncer/internal/secrets"
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
 )
@@ -37,7 +40,20 @@ type Config struct {
 	RestoreTabs bool      `json:"restore_tabs"`
 	LastSync    time.Time `json:"last_sync"`
 	LastError   string    `json:"last_error,omitempty"`
-	SetupDone   bool      `json:"setup_done"` // the first-sync preview was approved
+	SetupDone   bool      `json:"setup_done"`            // the first-sync preview was approved
+	PersonName  string    `json:"person_name,omitempty"` // only on this computer, for greetings
+	Battery     string    `json:"battery,omitempty"`     // agent.Battery* mode; empty = balanced
+	Off         []string  `json:"off,omitempty"`         // engine.Kind* not synced on this computer
+}
+
+// IsOff reports whether a kind (engine.Kind*) is switched off here.
+func (c *Config) IsOff(kind string) bool {
+	for _, k := range c.Off {
+		if k == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrNotConnected: run start or join first.
@@ -158,9 +174,17 @@ func (c *Config) Connect(ctx context.Context, code string, create bool) (cloud.J
 
 // Disconnect forgets the sync on this device (Helium's data is untouched).
 func (c *Config) Disconnect() error {
+	// Best effort: take this computer off the list on the other computers.
+	if cl, err := c.Client(); err == nil && c.DeviceID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cl.Remove(ctx, c.DeviceID)
+		cancel()
+	}
 	secrets.Delete(Dir(), codeSecret)
 	secrets.Delete(Dir(), tokenSecret)
 	c.DeviceID, c.AccountID = "", ""
+	// A new sync must show its preview again before anything changes.
+	c.SetupDone, c.LastSync, c.LastError = false, time.Time{}, ""
 	return c.Save()
 }
 
@@ -187,14 +211,58 @@ func (c *Config) EngineConfig() (engine.Config, error) {
 		return engine.Config{}, errors.New("no Helium folder chosen yet")
 	}
 	return engine.Config{UserData: c.UserData, StateDir: c.StateDir(), DeviceID: c.DeviceID, DeviceName: c.DeviceName,
-		MachineID: mid, Transport: cl, RestoreTabs: c.RestoreTabs}, nil
+		MachineID: mid, Transport: cl, RestoreTabs: c.RestoreTabs, Off: c.offMap()}, nil
 }
 
-// DefaultDeviceName is a friendly name like "Rishabh's MacBook Air (macOS)".
-func DefaultDeviceName() string {
-	h, _ := os.Hostname()
-	if h == "" {
-		h = "This computer"
+func (c *Config) offMap() map[string]bool {
+	if len(c.Off) == 0 {
+		return nil
 	}
-	return fmt.Sprintf("%s (%s)", h, map[string]string{"windows": "Windows", "darwin": "macOS", "linux": "Linux"}[runtime.GOOS])
+	m := map[string]bool{}
+	for _, k := range c.Off {
+		m[k] = true
+	}
+	return m
+}
+
+// DefaultDeviceName is a friendly name for this computer, like
+// "Rishabh's MacBook Air" or "Rishabh's Windows laptop". person may be "".
+func DefaultDeviceName(person string) string {
+	kind := computerKind()
+	person = strings.TrimSpace(person)
+	if runtime.GOOS == "darwin" {
+		// macOS keeps a friendly name, e.g. "Rishabh's MacBook Air".
+		if out, err := exec.Command("/usr/sbin/scutil", "--get", "ComputerName").Output(); err == nil {
+			if n := strings.TrimSpace(string(out)); n != "" {
+				if strings.Contains(n, "'s ") || strings.Contains(n, "’s ") || person == "" {
+					return n
+				}
+				kind = n // e.g. "MacBook Air" -> "Priya's MacBook Air"
+			}
+		}
+	}
+	if person != "" {
+		return person + "'s " + kind
+	}
+	return "My " + kind
+}
+
+func computerKind() string {
+	laptop := power.Read().HasBattery
+	switch runtime.GOOS {
+	case "darwin":
+		if laptop {
+			return "MacBook"
+		}
+		return "Mac"
+	case "windows":
+		if laptop {
+			return "Windows laptop"
+		}
+		return "Windows PC"
+	}
+	if laptop {
+		return "laptop"
+	}
+	return "computer"
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/agent"
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
+	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 	"github.com/imrishabhchauhan/helium-syncer/internal/tray"
 	"github.com/imrishabhchauhan/helium-syncer/internal/ui"
 )
@@ -25,6 +26,7 @@ func main() {
 	// the window too.
 	background := len(os.Args) > 1 && os.Args[1] == "--background"
 	agent.AutostartArgs = []string{"--background"}
+	power.Efficient() // Windows efficiency mode: low clock speed, efficient cores
 	logger := openLog()
 
 	lock, err := agent.Lock()
@@ -115,14 +117,14 @@ func keepAgent(ctx context.Context, s *ui.Server, logger *log.Logger) {
 }
 
 func view(s *ui.Server, elsewhere bool) tray.View {
-	cfg, err := app.Load()
+	cfg, err := app.LoadCached()
 	if err != nil {
 		return tray.View{LastError: err.Error(), Connected: true, SetupDone: true}
 	}
 	v := tray.View{Connected: cfg.Connected(), SetupDone: cfg.SetupDone, LastSync: cfg.LastSync, LastError: cfg.LastError, Elsewhere: elsewhere}
 	if a := s.Agent(); a != nil {
 		st := a.Status.Snapshot()
-		v.HeliumOpen, v.Syncing, v.Paused, v.LastError = st.HeliumOpen, st.Syncing, st.Paused, st.LastError
+		v.HeliumOpen, v.Syncing, v.Paused, v.LastError, v.PowerNote = st.HeliumOpen, st.Syncing, st.Paused, st.LastError, st.PowerNote
 		if st.LastSync.After(v.LastSync) {
 			v.LastSync = st.LastSync
 		}

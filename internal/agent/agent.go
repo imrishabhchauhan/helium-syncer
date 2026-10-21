@@ -19,18 +19,30 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
+	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 )
 
-// Timing of the loop.
+// Timing of the loop. Fields left at zero fall back to a sensible value.
 type Timing struct {
-	Poll        time.Duration // how often to check whether Helium runs
-	AfterQuit   time.Duration // wait after Helium quits (it flushes files)
-	WhileClosed time.Duration // pull interval while Helium is closed
-	MaxBackoff  time.Duration
+	Poll               time.Duration // how often to check whether Helium runs (plugged in)
+	PollBattery        time.Duration // the same on battery
+	AfterQuit          time.Duration // wait after Helium quits (it flushes files)
+	WhileClosed        time.Duration // pull interval while Helium is closed (plugged in)
+	WhileClosedBattery time.Duration // the same on battery
+	MaxBackoff         time.Duration
 }
 
-// DefaultTiming is used by the real agent.
-var DefaultTiming = Timing{Poll: 2 * time.Second, AfterQuit: 4 * time.Second, WhileClosed: 5 * time.Minute, MaxBackoff: 30 * time.Minute}
+// DefaultTiming is used by the real agent. A check is one cheap file test;
+// a pull is one small download when nothing changed.
+var DefaultTiming = Timing{Poll: 5 * time.Second, PollBattery: 15 * time.Second, AfterQuit: 4 * time.Second,
+	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute, MaxBackoff: 30 * time.Minute}
+
+// Battery modes (app.Config.Battery).
+const (
+	BatteryBalanced = "balanced" // default: on battery pull less; on low battery only send after quit
+	BatteryPlugged  = "plugged"  // on battery do nothing until plugged in (Sync now still works)
+	BatteryAlways   = "always"   // on battery the same as plugged in
+)
 
 // LockAddr is a local port held while an agent runs (one agent at a time).
 const LockAddr = "127.0.0.1:47811"
@@ -54,13 +66,14 @@ type Status struct {
 	LastError  string
 	Paused     string
 	Syncing    bool
+	PowerNote  string // why a sync waits for power, if it does
 }
 
 // Snapshot copies the status.
 func (s *Status) Snapshot() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Status{HeliumOpen: s.HeliumOpen, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing}
+	return Status{HeliumOpen: s.HeliumOpen, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
 }
 
 // Agent runs the loop.
@@ -76,6 +89,13 @@ type Agent struct {
 	// Trigger asks for a sync as soon as possible (e.g. "Sync now").
 	Trigger chan struct{}
 	Log     *log.Logger
+	// Power reads the power supply; nil means always plugged in.
+	Power func() power.State
+	// Mode is the battery mode (BatteryBalanced when nil or empty).
+	Mode func() string
+
+	pw     power.State
+	pwRead time.Time
 }
 
 // New builds the real agent for the saved config.
@@ -93,6 +113,8 @@ func New() (*Agent, error) {
 	}
 	a := &Agent{Timing: DefaultTiming, Status: &Status{}, Now: time.Now, Trigger: make(chan struct{}, 1), Log: log.New(lf, "", log.LstdFlags)}
 	a.Running = func() (bool, error) { return helium.IsRunning(cfg.UserData) }
+	a.Power = power.Read
+	a.Mode = configMode()
 	a.Sync = func(ctx context.Context) (engine.Report, error) {
 		c, err := app.Load() // pick up changes made from the command line
 		if err != nil {
@@ -106,16 +128,36 @@ func New() (*Agent, error) {
 		if err != nil {
 			return engine.Report{}, err
 		}
-		rep, err := engine.Run(ctx, ec)
-		if err == nil && rep.Paused == "" {
-			c.LastSync, c.LastError = time.Now(), ""
-		} else if err != nil {
-			c.LastError = err.Error()
+		rep, err := runLow(ctx, ec)
+		// Load again: settings may have changed while the sync ran.
+		if c, lerr := app.Load(); lerr == nil {
+			if err == nil && rep.Paused == "" {
+				c.LastSync, c.LastError = time.Now(), ""
+			} else if err != nil {
+				c.LastError = err.Error()
+			}
+			c.Save()
 		}
-		c.Save()
 		return rep, err
 	}
 	return a, nil
+}
+
+// runLow runs a sync at low priority, so the computer stays quiet and cool.
+func runLow(ctx context.Context, ec engine.Config) (engine.Report, error) {
+	restore := power.Background()
+	defer restore()
+	return engine.Run(ctx, ec)
+}
+
+// configMode reads the battery mode from the settings file.
+func configMode() func() string {
+	return func() string {
+		if c, err := app.LoadCached(); err == nil {
+			return c.Battery
+		}
+		return ""
+	}
 }
 
 func openLog() (*os.File, error) {
@@ -173,26 +215,62 @@ func AskToShow() error {
 	return nil
 }
 
+// power returns the power state, read at most once a minute (on macOS a
+// reading starts a small program).
+func (a *Agent) power(now time.Time) power.State {
+	if a.Power == nil {
+		return power.State{Percent: -1}
+	}
+	if a.pwRead.IsZero() || now.Sub(a.pwRead) >= time.Minute || now.Before(a.pwRead) {
+		a.pw, a.pwRead = a.Power(), now
+	}
+	return a.pw
+}
+
+func (a *Agent) mode() string {
+	if a.Mode != nil {
+		switch m := a.Mode(); m {
+		case BatteryPlugged, BatteryAlways:
+			return m
+		}
+	}
+	return BatteryBalanced
+}
+
+func or(d, fallback time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return fallback
+}
+
 // Run loops until ctx ends.
+//
+// Plugged in, it checks Helium every few seconds, syncs after Helium quits
+// and pulls every few minutes while Helium is closed. On battery it does
+// less (see the Battery modes). While Helium is open it never syncs.
 func (a *Agent) Run(ctx context.Context) error {
 	t := a.Timing
+	pollBattery := or(t.PollBattery, t.Poll)
+	closedBattery := or(t.WhileClosedBattery, 6*t.WhileClosed)
 	wasOpen := false
+	pendingQuit := false // Helium quit and its changes are not sent yet
 	quitAt := time.Time{}
 	var lastAttempt time.Time
 	backoff := time.Duration(0)
 	first := true
-	tick := time.NewTicker(t.Poll)
-	defer tick.Stop()
+	timer := time.NewTimer(time.Hour)
+	defer timer.Stop()
 	for {
 		open, err := a.Running()
 		if err != nil {
 			a.logf("cannot tell whether Helium is open: %v", err)
 			open = true // be safe: never sync when unsure
 		}
-		a.Status.mu.Lock()
-		a.Status.HeliumOpen = open
-		a.Status.mu.Unlock()
 		now := a.Now()
+		pw, mode := a.power(now), a.mode()
+		pluggedOnly := mode == BatteryPlugged && pw.OnBattery
+		lowPower := mode != BatteryAlways && pw.Low()
 		if open != wasOpen && !first {
 			if open {
 				a.logf("Helium opened; waiting until it quits")
@@ -200,40 +278,74 @@ func (a *Agent) Run(ctx context.Context) error {
 				a.logf("Helium quit; syncing in %s", t.AfterQuit)
 			}
 		}
-		due := false
-		reason := ""
+		due, reason, note := false, "", ""
 		switch {
 		case open:
 			// Never touch anything while Helium is open.
 		case wasOpen:
-			quitAt = now
-		case !quitAt.IsZero() && now.Sub(quitAt) >= t.AfterQuit:
-			due, reason = true, "Helium quit"
-			quitAt = time.Time{}
-		case quitAt.IsZero() && (first || now.Sub(lastAttempt) >= t.WhileClosed+backoff):
-			due, reason = true, "periodic"
+			quitAt, pendingQuit = now, true
+		case pendingQuit && now.Sub(quitAt) >= t.AfterQuit:
+			if pluggedOnly {
+				note = "Your changes sync when you plug in."
+			} else {
+				due, reason = true, "Helium quit"
+			}
+		case pendingQuit:
+			// Wait until Helium has written its files.
+		case pluggedOnly:
+			note = "On battery: syncs when you plug in."
+		case lowPower && !first:
+			// Low battery or saver mode: pull nothing now. The next quit of
+			// Helium still sends its changes.
+		default:
+			interval := t.WhileClosed
+			if pw.OnBattery && mode == BatteryBalanced {
+				interval = closedBattery
+			}
+			if first || now.Sub(lastAttempt) >= interval+backoff {
+				due, reason = true, "periodic"
+			}
 		}
 		select {
 		case <-a.Trigger:
 			if !open {
-				due, reason = true, "requested"
+				due, reason = true, "requested" // a person asked: always do it
 			}
 		default:
 		}
+		a.Status.mu.Lock()
+		a.Status.HeliumOpen, a.Status.PowerNote = open, note
+		a.Status.mu.Unlock()
 		wasOpen, first = open, false
 		if due {
 			lastAttempt = now
+			if reason == "Helium quit" || reason == "requested" {
+				pendingQuit = false
+			}
 			if err := a.syncOnce(ctx, reason); err != nil {
 				backoff = min(max(2*backoff, time.Minute), t.MaxBackoff)
 			} else {
 				backoff = 0
 			}
 		}
+		wait := t.Poll
+		if pw.OnBattery {
+			wait = pollBattery
+		}
+		if pendingQuit && !pluggedOnly {
+			if left := t.AfterQuit - a.Now().Sub(quitAt); left < wait {
+				wait = max(left, 10*time.Millisecond)
+			}
+		}
+		timer.Reset(wait)
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-tick.C:
+		case <-timer.C:
 		case <-a.Trigger:
+			if !timer.Stop() {
+				<-timer.C
+			}
 			// Re-queue so the next loop iteration sees it.
 			select {
 			case a.Trigger <- struct{}{}:

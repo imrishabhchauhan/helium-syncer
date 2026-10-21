@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/crdt"
@@ -283,8 +284,14 @@ func (c *Client) Versions(ctx context.Context, exceptDevice string) (map[string]
 }
 
 // Announce records this device's Helium version.
-func (c *Client) Announce(ctx context.Context, _, _ string, version string) error {
-	_, err := c.do(ctx, "PUT", "/v1/devices/me", map[string]string{"helium_version": version}, nil)
+// Announce tells the server this device's Helium version and current name
+// (so a rename in Settings shows on the other computers).
+func (c *Client) Announce(ctx context.Context, _, name string, version string) error {
+	body := map[string]string{"helium_version": version}
+	if name = strings.TrimSpace(name); name != "" {
+		body["name"] = name
+	}
+	_, err := c.do(ctx, "PUT", "/v1/devices/me", body, nil)
 	return err
 }
 

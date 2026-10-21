@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 )
 
 // The local page must refuse anything that is not this page talking to us:
@@ -58,5 +60,45 @@ func TestOnlyThePageCanTalkToTheServer(t *testing.T) {
 				t.Errorf("%s: page can be framed", c.name)
 			}
 		}
+	}
+}
+
+func TestSettingsAreChecked(t *testing.T) {
+	t.Setenv("HELIUM_SYNCER_HOME", t.TempDir())
+	s := &Server{}
+	if _, err := s.Start(); err != nil {
+		t.Fatal(err)
+	}
+	post := func(body string) int {
+		req, _ := http.NewRequest("POST", "http://"+s.addr+"/api/settings", strings.NewReader(body))
+		req.Header.Set("X-Key", s.key)
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+	for body, want := range map[string]int{
+		`{"battery":"plugged"}`: 200,
+		`{"battery":"turbo"}`:   400,
+		`{"off":["history"]}`:   200,
+		`{"off":["passwords"]}`: 400,
+		`{"off":["bookmarks","history","tabs","settings","extensions"]}`: 400,
+		`{"personName":"Priya"}`:                           200,
+		`{"personName":"` + strings.Repeat("a", 41) + `"}`: 400,
+		`{"heliumDir":"C:/no/such/folder"}`:                400,
+	} {
+		if got := post(body); got != want {
+			t.Errorf("%s: got %d, want %d", body, got, want)
+		}
+	}
+	cfg, _ := app.Load()
+	if cfg.Battery != "plugged" || len(cfg.Off) != 1 || cfg.Off[0] != "history" || cfg.PersonName != "Priya" {
+		t.Fatalf("saved settings: %+v", cfg)
+	}
+	if !strings.HasPrefix(cfg.DeviceName, "Priya") && cfg.DeviceName != "" {
+		t.Errorf("the computer name should follow the person's name before joining: %q", cfg.DeviceName)
 	}
 }

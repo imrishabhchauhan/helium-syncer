@@ -20,6 +20,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/detect"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
+	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
 	"github.com/imrishabhchauhan/helium-syncer/internal/ui"
 	"github.com/imrishabhchauhan/helium-syncer/internal/vault"
@@ -98,7 +99,7 @@ func run(cmd string, pos []string, folder, name, server string, dry, restore boo
 		cfg.DeviceName = name
 	}
 	if cfg.DeviceName == "" {
-		cfg.DeviceName = app.DefaultDeviceName()
+		cfg.DeviceName = app.DefaultDeviceName(cfg.PersonName)
 	}
 	if folder != "" {
 		in, ok := detect.Inspect(folder)
@@ -332,6 +333,7 @@ func runUI(noOpen bool) error {
 }
 
 func runAgent() error {
+	power.Efficient()
 	lock, err := agent.Lock()
 	if err != nil {
 		return err

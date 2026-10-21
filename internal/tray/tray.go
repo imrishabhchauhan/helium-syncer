@@ -12,7 +12,7 @@ import (
 
 // Options connect the tray to the app.
 type Options struct {
-	Status  func() View // polled every few seconds
+	Status  func() View // asked every 5 seconds; keep it cheap
 	Open    func()      // show the Helium Syncer window
 	SyncNow func()
 	OnQuit  func() // runs before the app exits
@@ -111,7 +111,7 @@ func ready(o Options) {
 	}
 	refresh()
 	go func() {
-		tick := time.NewTicker(2 * time.Second)
+		tick := time.NewTicker(5 * time.Second) // only reads memory and one file date
 		defer tick.Stop()
 		for {
 			select {
