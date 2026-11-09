@@ -49,6 +49,9 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 					return b, nil
 				}
 			}
+			if !extensions.SyncsPackage(dir, id) {
+				return "", nil // too big for the server: name and state still sync
+			}
 			pkg, err := extensions.Package(dir, id)
 			if err != nil {
 				return "", err
