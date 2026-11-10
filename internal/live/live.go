@@ -1,4 +1,5 @@
-// Package live syncs bookmarks while Helium is open.
+// Package live syncs bookmarks and open tabs while Helium is open (tabs:
+// see tabs.go).
 //
 // A tool that edits Helium's files cannot change a browser that is running:
 // Chromium keeps bookmarks in memory and rewrites the file when it quits, so
@@ -80,6 +81,10 @@ type Msg struct {
 	// Created answers an "apply": for each bookmark the extension made, the
 	// app's placeholder ("new:<guid>") and the browser id Helium gave it.
 	Created map[string]string `json:"created,omitempty"`
+	// Tabs is the open windows and tabs ("tabs", from the extension).
+	Tabs *TabsReport `json:"tabs,omitempty"`
+	// Apply is the tab changes to make ("applyTabs", from the app).
+	Apply *TabsApply `json:"apply,omitempty"`
 }
 
 // chromiumRoots maps the browser's folder types to the names the Bookmarks
@@ -107,6 +112,13 @@ type conn struct {
 	// by placeholder, until the extension says which ids they got.
 	pending     map[string]Node
 	pendingDate map[string]string // placeholder -> date_added the sync holds
+	// tabs is the last tabs report; nil until the extension sends one (an
+	// older extension never does). tabsRead is the one the last ReadTabs
+	// returned, which WriteTabs plans against.
+	tabs, tabsRead *TabsReport
+	// nonce names this connection in the group names it makes up (tab group
+	// numbers start again with each browser start).
+	nonce string
 }
 
 // Server holds the connected browsers and translates between the extension's
@@ -313,7 +325,7 @@ func (s *Server) Handler() http.Handler {
 
 func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 	defer ws.CloseNow()
-	c := &conn{ws: ws}
+	c := &conn{ws: ws, nonce: strings.ReplaceAll(uuid.NewString(), "-", "")[:12]}
 	for {
 		var m Msg
 		if err := wsjson.Read(ctx, ws, &m); err != nil {
@@ -379,6 +391,20 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 				}
 			}
 			s.mu.Unlock()
+		case "tabs":
+			if m.Tabs == nil {
+				continue
+			}
+			s.mu.Lock()
+			changed := tabsShape(c.tabs) != tabsShape(m.Tabs)
+			c.tabs = m.Tabs
+			profile := c.profile
+			s.mu.Unlock()
+			// The profile is known once a bookmarks tree matched it; that
+			// first match starts a sync of its own.
+			if changed && profile != "" && s.Changed != nil {
+				s.Changed(profile)
+			}
 		case "pong":
 			// keeps the extension's service worker awake; nothing to do
 		}

@@ -13,8 +13,8 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
 )
 
-// snapshot fingerprints every file under dir.
-func snapshot(t *testing.T, dir string) map[string][32]byte {
+// fileSnapshot fingerprints every file under dir.
+func fileSnapshot(t *testing.T, dir string) map[string][32]byte {
 	t.Helper()
 	out := map[string][32]byte{}
 	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -105,11 +105,11 @@ func TestWhileOpenChangesNoHeliumFile(t *testing.T) {
 	open.Running = func(string) (bool, error) { return true, nil }
 
 	// 1. No browser connected: nothing changes, and nothing is lost.
-	before := snapshot(t, winUD)
+	before := fileSnapshot(t, winUD)
 	if _, err := Run(ctx, open); err != nil {
 		t.Fatalf("sync while open: %v", err)
 	}
-	sameFiles(t, "no browser connected", before, snapshot(t, winUD))
+	sameFiles(t, "no browser connected", before, fileSnapshot(t, winUD))
 
 	// 2. The browser is connected: the bookmark goes to it, files stay.
 	tree, err := bookmarks.Load(filepath.Join(winUD, "Profile 1", "Bookmarks"))
@@ -121,7 +121,7 @@ func TestWhileOpenChangesNoHeliumFile(t *testing.T) {
 	if _, err := Run(ctx, open); err != nil {
 		t.Fatalf("live sync while open: %v", err)
 	}
-	sameFiles(t, "browser connected", before, snapshot(t, winUD))
+	sameFiles(t, "browser connected", before, fileSnapshot(t, winUD))
 	if b.applied == nil || !strings.Contains(fileTitles(b.applied), "From the Mac") {
 		t.Fatalf("the Mac's bookmark did not reach the open browser")
 	}

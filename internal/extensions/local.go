@@ -115,8 +115,10 @@ func RemoveLocal(profile, id, deviceID string) error {
 }
 
 // LocalInstalled reports whether this profile points at this folder and
-// Helium will run it: registered from a folder, nothing switching it off, and
-// developer mode on.
+// Helium will run it: registered from a folder, nothing switching it off,
+// developer mode on, and every permission the folder's manifest asks for
+// already granted (a new version may ask for more; registering it again
+// grants them, so nobody is asked).
 func LocalInstalled(profile, id, dir, goos string) bool {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -134,7 +136,36 @@ func LocalInstalled(profile, id, dir, goos string) bool {
 	return str(e["path"]) == pathFor(abs, goos) &&
 		intOf(e["location"]) == LocationUnpacked &&
 		len(reasons) == 0 &&
-		chromejson.Lookup(doc, DeveloperModePath) == true
+		chromejson.Lookup(doc, DeveloperModePath) == true &&
+		grantedAll(e, abs)
+}
+
+// grantedAll reports whether the entry grants every API permission the
+// manifest in dir asks for.
+func grantedAll(entry map[string]any, dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return true // nothing to compare with; the path check decides
+	}
+	var manifest map[string]any
+	if json.Unmarshal(raw, &manifest) != nil {
+		return true
+	}
+	granted := map[string]bool{}
+	g, _ := entry["granted_permissions"].(map[string]any)
+	api, _ := g["api"].([]any)
+	for _, p := range api {
+		if s, ok := p.(string); ok {
+			granted[s] = true
+		}
+	}
+	want, _ := permissions(manifest)["api"].([]any)
+	for _, p := range want {
+		if !granted[p.(string)] {
+			return false
+		}
+	}
+	return true
 }
 
 func pathFor(abs, goos string) string {

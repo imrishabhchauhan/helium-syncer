@@ -46,9 +46,11 @@ type Timing struct {
 // a pull is one small download when nothing changed.
 var DefaultTiming = Timing{Poll: 5 * time.Second, PollBattery: 15 * time.Second, AfterQuit: 4 * time.Second,
 	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute,
-	// About 4,300 small requests a day per computer if Helium stays open
-	// all day, inside the server's free daily allowance.
-	LivePull: 20 * time.Second, LivePullBattery: 2 * time.Minute,
+	// A check is one small request (CheckLive), so a tab or bookmark from
+	// the other computer arrives within seconds. Helium open all day,
+	// plugged in: about 17,300 requests a day per computer, inside the
+	// server's free 100,000 a day for two computers.
+	LivePull: 5 * time.Second, LivePullBattery: 15 * time.Second,
 	MaxBackoff: 30 * time.Minute}
 
 // Battery modes (app.Config.Battery).
@@ -117,6 +119,13 @@ type Agent struct {
 	// LiveConnected reports whether any browser has the companion extension
 	// connected; replaceable in tests.
 	LiveConnected func() bool
+	// CheckLive asks the server, cheaply, whether the other computer sent a
+	// change; the regular live check runs a full sync only when it did.
+	// Nil runs the full sync every time. Replaceable in tests.
+	CheckLive func(ctx context.Context) (bool, error)
+	// synced receives the server cursor after each successful sync, for
+	// CheckLive to go on from.
+	synced func(cursor string)
 
 	pw        power.State
 	pwRead    time.Time
@@ -203,10 +212,15 @@ func New() (*Agent, error) {
 			return engine.Report{}, err
 		}
 		ec.Live = a.Live
+		// Tabs come from the session files here: Helium is closed, and a
+		// browser connection still listed may be one that just went away.
 		rep, err := runLow(ctx, ec)
+		if err == nil {
+			a.synced(rep.Cursor)
+		}
 		// Helium is closed and its files are settled: the one moment the
 		// companion extension can be added to a profile.
-		if err == nil && !ec.Off[engine.KindBookmarks] {
+		if err == nil && !(ec.Off[engine.KindBookmarks] && ec.Off[engine.KindTabs]) {
 			a.ensureCompanion(ec)
 		}
 		// Load again: settings may have changed while the sync ran.
@@ -220,8 +234,8 @@ func New() (*Agent, error) {
 		}
 		return rep, err
 	}
-	// Bookmarks only, through the open browser. Everything else keeps its
-	// own rule: Helium's files are not touched while it runs.
+	// Bookmarks and open tabs only, through the open browser. Everything
+	// else keeps its own rule: Helium's files are not touched while it runs.
 	a.SyncLive = func(ctx context.Context) (engine.Report, error) {
 		c, err := app.Load()
 		if err != nil {
@@ -234,15 +248,56 @@ func New() (*Agent, error) {
 		if err != nil {
 			return engine.Report{}, err
 		}
-		if ec.Off[engine.KindBookmarks] {
-			return engine.Report{}, nil // the person turned bookmarks off
+		if ec.Off[engine.KindBookmarks] && ec.Off[engine.KindTabs] {
+			return engine.Report{}, nil // the person turned both off
 		}
 		ec.Live = a.Live
+		ec.LiveTabs = a.Live
 		// Helium is open: the engine writes none of its files, syncs the
-		// bookmarks of connected browsers, and keeps the rest for the sync
-		// after Helium quits.
+		// bookmarks and tabs of connected browsers, and keeps the rest for
+		// the sync after Helium quits.
 		ec.WhileOpen = true
-		return runLow(ctx, ec)
+		rep, err := runLow(ctx, ec)
+		if err == nil {
+			a.synced(rep.Cursor)
+		}
+		return rep, err
+	}
+	// The regular check while Helium is open: one small request, with the
+	// connection details kept between checks (reading them involves the
+	// system key store).
+	var (
+		peekMu     sync.Mutex
+		peekCursor string
+		peekClient engine.Transport
+		peekState  string
+		peekDevice string
+		peekAt     time.Time
+	)
+	a.synced = func(cursor string) {
+		peekMu.Lock()
+		peekCursor = cursor
+		peekMu.Unlock()
+	}
+	a.CheckLive = func(ctx context.Context) (bool, error) {
+		peekMu.Lock()
+		defer peekMu.Unlock()
+		if peekClient == nil || time.Since(peekAt) > 10*time.Minute {
+			c, err := app.Load()
+			if err != nil {
+				return true, err
+			}
+			cl, err := c.Client()
+			if err != nil {
+				return true, err
+			}
+			peekClient, peekState, peekDevice, peekAt = cl, c.StateDir(), c.DeviceID, time.Now()
+		}
+		changed, err := engine.Peek(ctx, peekClient, peekState, peekDevice, &peekCursor)
+		if err != nil {
+			peekClient = nil // build it again next time
+		}
+		return changed, err
 	}
 	return a, nil
 }
@@ -493,6 +548,16 @@ func (a *Agent) Run(ctx context.Context) error {
 			if reason == "Helium quit" || reason == "requested" {
 				pendingQuit = false
 			}
+			if reason == liveCheckReason && a.CheckLive != nil {
+				// Nothing new from the other computer: no sync needed. On an
+				// error the full sync runs, and reports it.
+				if changed, err := a.CheckLive(ctx); err == nil && !changed {
+					due = false
+					backoff = 0
+				}
+			}
+		}
+		if due {
 			if err := a.syncOnce(ctx, reason); err != nil {
 				backoff = min(max(2*backoff, time.Minute), t.MaxBackoff)
 			} else {

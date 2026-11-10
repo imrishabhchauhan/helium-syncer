@@ -338,3 +338,51 @@ func TestLiveCheckWhileOpen(t *testing.T) {
 		}
 	}
 }
+
+// The regular live check runs the full sync only when the cheap server check
+// says the other computer sent something, or when that check fails.
+func TestLiveCheckSyncsOnlyWhenTheServerHasNews(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		news    bool
+		err     error
+		wantRun bool
+	}{
+		{"nothing new", false, nil, false},
+		{"news", true, nil, true},
+		{"check failed", false, context.DeadlineExceeded, true},
+	} {
+		f := &fake{open: true}
+		a := newTestAgent(f)
+		a.Timing.LivePull = 40 * time.Millisecond
+		var mu sync.Mutex
+		runs, checks := 0, 0
+		a.SyncLive = func(context.Context) (engine.Report, error) {
+			mu.Lock()
+			runs++
+			mu.Unlock()
+			return engine.Report{}, nil
+		}
+		a.CheckLive = func(context.Context) (bool, error) {
+			mu.Lock()
+			checks++
+			mu.Unlock()
+			return tc.news, tc.err
+		}
+		a.LiveConnected = func() bool { return true }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { a.Run(ctx); close(done) }()
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+		<-done
+		mu.Lock()
+		if checks < 3 {
+			t.Errorf("%s: %d check(s), want several", tc.name, checks)
+		}
+		if got := runs > 0; got != tc.wantRun {
+			t.Errorf("%s: full live sync ran %d time(s), want ran=%v", tc.name, runs, tc.wantRun)
+		}
+		mu.Unlock()
+	}
+}

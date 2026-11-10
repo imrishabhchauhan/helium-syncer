@@ -61,15 +61,31 @@ type Config struct {
 	// Nil, or a profile the extension is not connected for, falls back to
 	// the Bookmarks file exactly as before.
 	Live LiveBookmarks
+	// LiveTabs does the same for open tabs: they sync through the browser
+	// while it runs. Nil, or a profile whose extension does not report tabs,
+	// leaves tabs to the session files, which change only while Helium is
+	// closed.
+	LiveTabs LiveTabs
 	// WhileOpen is a sync while Helium is running. It changes no file in
 	// Helium's folder: Helium keeps its data in memory and would overwrite
 	// the change, and the next sync would then read the overwrite as the
-	// person undoing it. Only the bookmarks of profiles whose browser is
-	// connected through Live sync, through the browser itself. Everything
-	// else that arrives, including bookmarks for a profile whose browser is
-	// not connected yet and changes to the profile list, is kept and
-	// applied by the next sync after Helium quits.
+	// person undoing it. Only the bookmarks and open tabs of profiles whose
+	// browser is connected through Live and LiveTabs sync, through the
+	// browser itself. Everything else that arrives, including changes for a
+	// profile whose browser is not connected yet and changes to the profile
+	// list, is kept and applied by the next sync after Helium quits.
 	WhileOpen bool
+}
+
+// LiveTabs is the companion extension's view of open tabs, one profile
+// directory at a time.
+type LiveTabs interface {
+	// ReadTabs returns the open windows and tabs as a session. ok is false
+	// when the extension is not connected or does not report tabs.
+	ReadTabs(profileDir string) (s *sessions.Session, ok bool)
+	// WriteTabs asks the browser to make its tabs match s, the merged
+	// session built from the last ReadTabs.
+	WriteTabs(profileDir string, s *sessions.Session) error
 }
 
 // LiveBookmarks is the companion extension, seen from the engine. One
@@ -139,6 +155,8 @@ type Report struct {
 	// Took is how long each step took, in milliseconds, e.g. "pull": 120.
 	// Steps inside profiles add up over all profiles.
 	Took map[string]int64 `json:",omitempty"`
+	// Cursor is where this run left the server's change list, for Peek.
+	Cursor string `json:"-"`
 }
 
 // step measures one step of a run into rep.Took: defer rep.step("pull")().
@@ -191,9 +209,10 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 
 	if cfg.WhileOpen {
+		// Only what the browser can change itself syncs while it is open.
 		off := map[string]bool{}
 		for _, k := range Kinds {
-			off[k] = k != KindBookmarks || cfg.Off[KindBookmarks]
+			off[k] = (k != KindBookmarks && k != KindTabs) || cfg.Off[k]
 		}
 		cfg.Off = off
 	}
@@ -350,6 +369,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 				return rep, err
 			}
 		}
+	}
+	if len(st.Outbox) == 0 {
+		// Peek may go on from here. With changes still waiting to be sent
+		// it must not: the next check then owes a full run that retries.
+		rep.Cursor = st.Cursor
 	}
 	pruneBackups(cfg.StateDir, 20, 30*24*time.Hour, cfg.Now())
 	return rep, nil
@@ -673,7 +697,15 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	done()
 	done = stepIn(ctx, "tabs")
 	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
-	if cfg.Off[KindTabs] {
+	var local *sessions.Session
+	liveTabs := false
+	if cfg.LiveTabs != nil && !cfg.Off[KindTabs] {
+		local, liveTabs = cfg.LiveTabs.ReadTabs(dir)
+	}
+	if cfg.Off[KindTabs] || (cfg.WhileOpen && !liveTabs) {
+		// Off, or Helium is open and this profile's browser does not report
+		// its tabs: the session files must not be touched, so keep what
+		// arrived for the sync after Helium quits.
 		keep(clock, tabOps, func(op crdt.Op) *crdt.Map {
 			if op.Type == merge.TypeGroup {
 				return ps.GroupMap
@@ -682,12 +714,14 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		})
 		return out, nil
 	}
-	local := &sessions.Session{Groups: map[[2]uint64]*sessions.Group{}}
-	if latest, err := sessions.LatestFile(dir); err == nil {
-		if s, err := sessions.ReadFile(latest); err == nil {
-			local = s
-		} else if errors.Is(err, sessions.ErrEncrypted) {
-			return nil, err // never overwrite a session we cannot read
+	if !liveTabs {
+		local = &sessions.Session{Groups: map[[2]uint64]*sessions.Group{}}
+		if latest, err := sessions.LatestFile(dir); err == nil {
+			if s, err := sessions.ReadFile(latest); err == nil {
+				local = s
+			} else if errors.Is(err, sessions.ErrEncrypted) {
+				return nil, err // never overwrite a session we cannot read
+			}
 		}
 	}
 	titleOf := func(u string) string {
@@ -699,9 +733,18 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	}
 	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf)
 	out = append(out, ops...)
-	// Only rewrite the session when tabs arrived from another device; this
-	// device's own changes are already in Helium's file.
-	if len(tabOps) > 0 {
+	if liveTabs {
+		// The browser owns its tabs while it runs: ask it to make the change.
+		if err := cfg.LiveTabs.WriteTabs(dir, projected); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	// Only rewrite the session when tabs arrived from another device, or
+	// when Helium quit with no tab open, so the synced tabs are there at the
+	// next start (see merge.SyncTabs); this device's own changes are already
+	// in Helium's file.
+	if len(tabOps) > 0 || ps.Tabs.Empty {
 		if err := closed(cfg); err != nil {
 			return nil, err
 		}

@@ -112,3 +112,40 @@ func TestCompanionScriptIsNamedForItsVersion(t *testing.T) {
 		t.Errorf("scripts left: %v, want only %s", left, want)
 	}
 }
+
+// A new version that asks for more permissions (0.2.0 added tabs) is
+// registered again after the next quit, so Helium grants them without
+// asking the person.
+func TestCompanionReinstallsForNewPermissions(t *testing.T) {
+	dirs := companionProfiles(t, 1)
+	c := Companion{Dir: filepath.Join(t.TempDir(), "extension"), MachineID: "TEST", GOOS: runtime.GOOS,
+		Running: func() (bool, error) { return false, nil }}
+	if _, err := c.Ensure(dirs); err != nil {
+		t.Fatal(err)
+	}
+	// An older version had fewer permissions.
+	p := filepath.Join(c.Dir, "manifest.json")
+	raw, _ := os.ReadFile(p)
+	var m map[string]any
+	json.Unmarshal(raw, &m)
+	full := m["permissions"]
+	m["permissions"] = []any{"alarms", "bookmarks"}
+	old, _ := json.Marshal(m)
+	os.WriteFile(p, old, 0o600)
+	if err := extensions.InstallLocal(dirs[0], ExtensionID, c.Dir, c.MachineID, c.GOOS); err != nil {
+		t.Fatal(err)
+	}
+	m["permissions"] = full
+	cur, _ := json.Marshal(m)
+	os.WriteFile(p, cur, 0o600)
+	if extensions.LocalInstalled(dirs[0], ExtensionID, c.Dir, c.GOOS) {
+		t.Fatal("an install missing the new permissions counts as installed")
+	}
+	done, err := c.Ensure(dirs)
+	if err != nil || len(done) != 1 {
+		t.Fatalf("reinstalled %d (err %v), want 1", len(done), err)
+	}
+	if !extensions.LocalInstalled(dirs[0], ExtensionID, c.Dir, c.GOOS) {
+		t.Fatal("still not installed with every permission")
+	}
+}

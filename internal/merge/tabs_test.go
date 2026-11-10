@@ -220,8 +220,11 @@ func TestTabsConvergeRandomized(t *testing.T) {
 				if r.Intn(3) == 0 {
 					nothingPending := d.seen == len(s.log)
 					before := view(d.sess)
+					// A device that shows no synced tab gets them back (and
+					// keeps them on its next sync): see SyncTabs.
+					emptySpell := before == "" || d.ts.Empty
 					d.sync(s)
-					if nothingPending && view(d.sess) != before {
+					if nothingPending && !emptySpell && view(d.sess) != before {
 						t.Fatalf("n=%d round %d: sync changed %s's own tabs\nbefore:\n%s\nafter:\n%s", n, round, d.name, before, view(d.sess))
 					}
 				}
