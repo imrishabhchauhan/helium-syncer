@@ -226,7 +226,7 @@ func TestANewConnectionLearnsTheFileAgain(t *testing.T) {
 // reads it back as a new bookmark (and the sent one as deleted), sends both,
 // and the other computer does the same in turn. Seen on the real Windows PC:
 // "sent 2" right after receiving 1.
-func TestAReceivedBookmarkKeepsItsKey(t *testing.T) {
+func receivedBookmark(t *testing.T, oldExtension bool) {
 	userData, dir := profileWithFile(t, fileJSON)
 	const ext = "abcdefghijklmnopabcdefghijklmnop"
 	s := New(userData)
@@ -275,8 +275,11 @@ func TestAReceivedBookmarkKeepsItsKey(t *testing.T) {
 	}
 
 	// The extension makes it; Helium calls it 500.
-	made := append(browserNodes(), Node{ID: "500", ParentID: "1", Index: 1, Title: "From the Mac", URL: "https://mac.example/"})
-	wsjson.Write(ctx, ws, Msg{Type: "created", Version: Version, Created: map[string]string{placeholder: "500"}})
+	// Helium stamps its own creation time on it, which the API cannot change.
+	made := append(browserNodes(), Node{ID: "500", ParentID: "1", Index: 1, Title: "From the Mac", URL: "https://mac.example/", DateAdded: 1794310000123})
+	if !oldExtension {
+		wsjson.Write(ctx, ws, Msg{Type: "created", Version: Version, Created: map[string]string{placeholder: "500"}})
+	}
 	wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: made})
 	deadline := time.Now().Add(3 * time.Second)
 	for {
@@ -292,16 +295,36 @@ func TestAReceivedBookmarkKeepsItsKey(t *testing.T) {
 	if got := guidsByTitle(f)["From the Mac"]; got != fromMac {
 		t.Fatalf("while open, the received bookmark reads as guid %s, want %s", got, fromMac)
 	}
+	var date string
+	walkFile(f, func(n map[string]any, _, _ string) {
+		if str(n["name"]) == "From the Mac" {
+			date = str(n["date_added"])
+		}
+	})
+	if date != "13300000000000000" {
+		t.Errorf("while open, the received bookmark reads date %s, want the synced 13300000000000000", date)
+	}
 
 	// Helium quits and writes its own random guid for id 500.
 	quit := mustParse(t, strings.Replace(fileJSON,
 		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
 		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
-			`{"date_added":"13300000000000000","guid":"eeeeeeee-0000-4000-8000-0000000000ee","id":"500","name":"From the Mac","type":"url","url":"https://mac.example/"}`, 1))
+			`{"date_added":"13438783600123000","guid":"eeeeeeee-0000-4000-8000-0000000000ee","id":"500","name":"From the Mac","type":"url","url":"https://mac.example/"}`, 1))
 	if n := s.RestoreKeys(dir, quit); n != 1 {
 		t.Fatalf("RestoreKeys put back %d, want 1", n)
 	}
 	if got := guidsByTitle(quit)["From the Mac"]; got != fromMac {
 		t.Errorf("after quit the received bookmark has guid %s, want %s", got, fromMac)
 	}
+	walkFile(quit, func(n map[string]any, _, _ string) {
+		if str(n["name"]) == "From the Mac" && str(n["date_added"]) != "13300000000000000" {
+			t.Errorf("after quit the received bookmark has date %s, want the synced 13300000000000000", str(n["date_added"]))
+		}
+	})
 }
+
+func TestAReceivedBookmarkKeepsItsKey(t *testing.T) { receivedBookmark(t, false) }
+
+// An extension older than the "created" answer: the app must still know the
+// bookmark it asked for when it appears.
+func TestAReceivedBookmarkKeepsItsKeyWithAnOlderExtension(t *testing.T) { receivedBookmark(t, true) }

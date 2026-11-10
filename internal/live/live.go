@@ -105,7 +105,8 @@ type conn struct {
 	seen    bool   // a tree has arrived at least once
 	// pending are the bookmarks the last "apply" asked the browser to make,
 	// by placeholder, until the extension says which ids they got.
-	pending map[string]Node
+	pending     map[string]Node
+	pendingDate map[string]string // placeholder -> date_added the sync holds
 }
 
 // Server holds the connected browsers and translates between the extension's
@@ -147,6 +148,11 @@ type bookmarkKey struct {
 	URL    string `json:"url,omitempty"`
 	Title  string `json:"title,omitempty"`
 	Folder bool   `json:"folder,omitempty"`
+	// Date is the date_added the sync holds for a bookmark the extension
+	// made. The browser stamps its own creation time and the API cannot
+	// change it, so each computer would otherwise report its own date and
+	// send it to the other, back and forth (seen on both computers).
+	Date string `json:"date,omitempty"`
 }
 
 // sameThing reports whether a file node is still the bookmark k was made for.
@@ -221,12 +227,22 @@ func (s *Server) RestoreKeys(profileDir string, f *bookmarks.File) int {
 	n := 0
 	walkFile(f, func(node map[string]any, _, guid string) {
 		k, ok := ks[str(node["id"])]
-		if !ok || guid == k.GUID || inFile[k.GUID] || !k.sameThing(node) {
+		if !ok || !k.sameThing(node) {
 			return
 		}
-		node["guid"] = k.GUID
-		inFile[k.GUID] = true
-		n++
+		changed := false
+		if guid != k.GUID && !inFile[k.GUID] {
+			node["guid"] = k.GUID
+			inFile[k.GUID] = true
+			changed = true
+		}
+		if k.Date != "" && str(node["date_added"]) != k.Date && str(node["guid"]) == k.GUID {
+			node["date_added"] = k.Date
+			changed = true
+		}
+		if changed {
+			n++
+		}
 	})
 	delete(s.keys, profileDir)
 	s.saveKeys()
@@ -243,6 +259,9 @@ type idGUIDs struct {
 	// the file's value every bookmark would look changed on each switch
 	// between the browser and the file, and sync back and forth for ever.
 	added map[string]string
+	// wanted is the date_added the sync holds for bookmarks the extension
+	// made, which the browser cannot take (see bookmarkKey.Date).
+	wanted map[string]string
 }
 
 // New makes a Server. UserData is Helium's folder.
@@ -347,11 +366,15 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 					if !known || id == "" || guid == placeholder {
 						continue
 					}
+					date := c.pendingDate[placeholder]
 					if ok {
 						ids.toGUID[id] = guid
 						ids.toID[guid] = id
+						if date != "" {
+							ids.wanted[id] = date
+						}
 					}
-					s.remember(c.profile, id, bookmarkKey{GUID: guid, URL: want.URL, Title: want.Title, Folder: want.Folder})
+					s.remember(c.profile, id, bookmarkKey{GUID: guid, URL: want.URL, Title: want.Title, Folder: want.Folder, Date: date})
 					delete(c.pending, placeholder)
 				}
 			}
@@ -454,7 +477,7 @@ func str(v any) string {
 // whatever the browser last wrote, which is enough: ids do not change. The
 // caller holds s.mu.
 func (s *Server) learn(profileDir string) idGUIDs {
-	m := idGUIDs{toGUID: map[string]string{}, toID: map[string]string{}, added: map[string]string{}}
+	m := idGUIDs{toGUID: map[string]string{}, toID: map[string]string{}, added: map[string]string{}, wanted: map[string]string{}}
 	f, err := bookmarks.Load(filepath.Join(profileDir, "Bookmarks"))
 	if err != nil {
 		return m
@@ -470,6 +493,9 @@ func (s *Server) learn(profileDir string) idGUIDs {
 		// file: the key, not Helium's own guid, is this bookmark's identity.
 		if k, ok := remembered[id]; ok && k.sameThing(n) {
 			guid = k.GUID
+			if k.Date != "" {
+				m.wanted[id] = k.Date
+			}
 		}
 		m.toGUID[id] = guid
 		m.toID[guid] = id
@@ -483,6 +509,9 @@ func (s *Server) learn(profileDir string) idGUIDs {
 		if _, inFile := m.toGUID[id]; !inFile {
 			m.toGUID[id] = k.GUID
 			m.toID[k.GUID] = id
+			if k.Date != "" {
+				m.wanted[id] = k.Date
+			}
 		}
 	}
 	for root, guid := range rootGUIDs {
@@ -500,9 +529,25 @@ func (s *Server) learn(profileDir string) idGUIDs {
 // made while the browser was open has none yet: one is made for it and
 // remembered, so it keeps it after Helium quits (see bookmarkKey). The caller
 // holds s.mu.
-func (s *Server) guidFor(profileDir string, m idGUIDs, n Node) string {
+func (s *Server) guidFor(profileDir string, c *conn, m idGUIDs, n Node) string {
 	if g, ok := m.toGUID[n.ID]; ok {
 		return g
+	}
+	// The bookmark we asked the browser to make, if the extension did not
+	// say which id it got (an older extension, or a lost message).
+	for placeholder, want := range c.pending {
+		if want.Title == n.Title && want.URL == n.URL && want.Folder == n.Folder {
+			g := strings.TrimPrefix(placeholder, "new:")
+			date := c.pendingDate[placeholder]
+			m.toGUID[n.ID] = g
+			m.toID[g] = n.ID
+			if date != "" {
+				m.wanted[n.ID] = date
+			}
+			s.remember(profileDir, n.ID, bookmarkKey{GUID: g, URL: n.URL, Title: n.Title, Folder: n.Folder, Date: date})
+			delete(c.pending, placeholder)
+			return g
+		}
 	}
 	g := uuid.NewString()
 	m.toGUID[n.ID] = g
@@ -548,7 +593,7 @@ func (s *Server) ReadBookmarks(profileDir string) (*bookmarks.File, bool) {
 		var out []any
 		for _, n := range byParent[parentID] {
 			node := map[string]any{
-				"guid":       s.guidFor(profileDir, ids, n),
+				"guid":       s.guidFor(profileDir, c, ids, n),
 				"id":         n.ID,
 				"name":       n.Title,
 				"date_added": ids.dateAdded(n.ID, n.DateAdded),
@@ -617,9 +662,13 @@ func rootName(name string) string {
 	}
 }
 
-// dateAdded is the file's own date_added when it is the same moment the
-// browser reported, to the millisecond; otherwise the browser's value.
+// dateAdded is the synced date for a bookmark the extension made; else the
+// file's own date_added when it is the same moment the browser reported, to
+// the millisecond; otherwise the browser's value.
 func (m idGUIDs) dateAdded(id string, ms int64) string {
+	if w := m.wanted[id]; w != "" {
+		return w // the browser cannot take the synced date; report it
+	}
 	browser := chromeTime(ms)
 	exact, ok := m.added[id]
 	if !ok || len(exact) < 4 || len(browser) < 4 {
@@ -656,6 +705,7 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 		return errors.New("live: no browser connected for this profile")
 	}
 	var out []Node
+	dates := map[string]string{} // guid -> date_added the sync holds
 	var visit func(parentBrowserID string, n map[string]any)
 	visit = func(parentBrowserID string, n map[string]any) {
 		kids, _ := n["children"].([]any)
@@ -665,6 +715,7 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 				continue
 			}
 			guid := str(km["guid"])
+			dates[guid] = str(km["date_added"])
 			node := Node{
 				ID:       ids.toID[guid],
 				ParentID: parentBrowserID,
@@ -702,14 +753,25 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 	if sameShape(out, c.nodes) {
 		return nil
 	}
-	pending := map[string]Node{}
+	pending, pendingDate := map[string]Node{}, map[string]string{}
 	for _, n := range out {
 		if strings.HasPrefix(n.ID, "new:") {
 			pending[n.ID] = n
+			pendingDate[n.ID] = dates[strings.TrimPrefix(n.ID, "new:")]
 		}
 	}
 	s.mu.Lock()
-	c.pending = pending
+	c.pending, c.pendingDate = pending, pendingDate
+	// A bookmark the extension made earlier keeps the synced date too.
+	s.loadKeys()
+	for id, k := range s.keys[profileDir] {
+		if d := dates[k.GUID]; d != "" && d != k.Date {
+			k.Date = d
+			s.keys[profileDir][id] = k
+			ids.wanted[id] = d
+		}
+	}
+	s.saveKeys()
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
