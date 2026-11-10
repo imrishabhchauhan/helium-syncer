@@ -119,6 +119,8 @@ type conn struct {
 	// nonce names this connection in the group names it makes up (tab group
 	// numbers start again with each browser start).
 	nonce string
+	// fresh: the browser just started and no merge has used its tabs yet.
+	fresh bool
 }
 
 // Server holds the connected browsers and translates between the extension's
@@ -398,6 +400,9 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 			s.mu.Lock()
 			changed := tabsShape(c.tabs) != tabsShape(m.Tabs)
 			c.tabs = m.Tabs
+			if m.Tabs.Fresh {
+				c.fresh = true
+			}
 			profile := c.profile
 			s.mu.Unlock()
 			// The profile is known once a bookmarks tree matched it; that

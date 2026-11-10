@@ -48,7 +48,7 @@ func companionCopy(t *testing.T, port int) string {
 }
 
 func (ls *liveSide) tabs() []string {
-	s, ok := ls.srv.ReadTabs(ls.profile)
+	s, _, ok := ls.srv.ReadTabs(ls.profile)
 	if !ok {
 		return nil
 	}
@@ -250,7 +250,7 @@ func TestEndToEndLiveTabs(t *testing.T) {
 	eval(t, ctx, lw.in, `chrome.tabs.query({}).then(ts => Promise.all(ts.filter(t => (t.url||"").endsWith("/a")).map(t => chrome.tabs.update(t.id, {pinned: true}))))`, nil)
 	time.Sleep(4 * time.Second) // pinning moves no page; give the report time
 	round("Windows pins /a")
-	ms, _ := lm.srv.ReadTabs(lm.profile)
+	ms, _, _ := lm.srv.ReadTabs(lm.profile)
 	pinned := false
 	for _, w := range ms.Windows {
 		for _, tb := range w.Tabs {

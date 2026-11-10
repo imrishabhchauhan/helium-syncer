@@ -36,6 +36,9 @@ import (
 type TabsReport struct {
 	Windows []LiveWindow `json:"windows"`
 	Groups  []LiveGroup  `json:"groups,omitempty"`
+	// Fresh marks the extension's first report since the browser started:
+	// what it shows is what Helium restored (see merge.SyncTabs).
+	Fresh bool `json:"fresh,omitempty"`
 }
 
 // LiveWindow is one window, its tabs in the order they show.
@@ -185,19 +188,21 @@ func tabsShape(r *TabsReport) string {
 	return b.String()
 }
 
-// ReadTabs returns the open browser's tabs as a session. ok is false when
-// no extension that reports tabs is connected for this profile; the caller
-// then leaves tabs to the sync after Helium quits.
-func (s *Server) ReadTabs(profileDir string) (*sessions.Session, bool) {
+// ReadTabs returns the open browser's tabs as a session. fresh is set from
+// the browser's first report after it started until a merge used it
+// (WriteTabs). ok is false when no extension that reports tabs is connected
+// for this profile; the caller then leaves tabs to the sync after Helium
+// quits.
+func (s *Server) ReadTabs(profileDir string) (sess *sessions.Session, fresh, ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.conns[profileDir]
-	if !ok || !c.seen || c.tabs == nil {
-		return nil, false
+	c, found := s.conns[profileDir]
+	if !found || !c.seen || c.tabs == nil {
+		return nil, false, false
 	}
 	// The changes WriteTabs sends are worked out against this report.
 	c.tabsRead = c.tabs
-	return c.tabs.session(c.nonce), true
+	return c.tabs.session(c.nonce), c.fresh, true
 }
 
 // WriteTabs asks the connected browser to make its tabs match s, the
@@ -214,6 +219,10 @@ func (s *Server) WriteTabs(profileDir string, sess *sessions.Session) error {
 	if !ok || base == nil {
 		return errors.New("live: no browser connected for this profile's tabs")
 	}
+	// A merge used the report: the browser's start is dealt with.
+	s.mu.Lock()
+	c.fresh = false
+	s.mu.Unlock()
 	a, changed := planTabs(base, sess, nonce)
 	if !changed {
 		return nil

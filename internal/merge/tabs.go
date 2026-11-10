@@ -471,6 +471,43 @@ func projectTabs(stateTabs, stateGroups *crdt.Map, local *sessions.Session, ky *
 	return out, created
 }
 
+// restored is what a browser that just started (or shows tabs again after
+// showing none) tells the sync. Helium restores its own copy of the last
+// session, and that copy can be older than the synced tabs (seen on the
+// Mac: a profile chosen in Helium's profile picker brought back a tab that
+// had closed on Windows). None of it is the person's doing:
+//
+//   - a tab the sync knew and that closed (here or elsewhere) closes again,
+//     instead of opening again everywhere;
+//   - a synced tab Helium did not restore opens again, instead of closing
+//     everywhere;
+//   - only a page the sync never knew is new, and opens everywhere.
+func restored(cur, curGroups map[string]json.RawMessage, ts *TabSync, stateTabs *crdt.Map) (tabs, groups map[string]json.RawMessage) {
+	tabs = map[string]json.RawMessage{}
+	for k, v := range ts.Tabs {
+		tabs[k] = v
+	}
+	for k, v := range cur {
+		if _, ok := tabs[k]; ok {
+			continue
+		}
+		if _, known := stateTabs.Entries[k]; known {
+			continue // closed before, or opened elsewhere since: the sync decides
+		}
+		tabs[k] = v
+	}
+	groups = map[string]json.RawMessage{}
+	for k, v := range ts.Groups {
+		groups[k] = v
+	}
+	for k, v := range curGroups {
+		if _, ok := groups[k]; !ok {
+			groups[k] = v
+		}
+	}
+	return tabs, groups
+}
+
 func randomToken() [2]uint64 {
 	var b [16]byte
 	rand.Read(b[:])
@@ -489,10 +526,13 @@ const LiveGroupPrefix = "live-"
 // everywhere: Helium quit with no window open (on a Mac, closing the last
 // window leaves Helium running with none), it was still starting, or only
 // local pages are open. Nothing is closed elsewhere then, and the synced
-// tabs come back here. The first tabs it shows after that are added to the
-// synced ones, so a new window with one page does not close all the others.
+// tabs come back here.
+//
+// fresh is the first look at a browser that just started. That look, and
+// the first one with tabs after a spell with none, show what Helium
+// restored, not what the person did (see restored).
 func SyncTabs(local *sessions.Session, ts *TabSync, stateTabs, stateGroups *crdt.Map, clock *crdt.Clock,
-	incoming []crdt.Op, titleOf func(string) string) (*sessions.Session, []crdt.Op) {
+	incoming []crdt.Op, titleOf func(string) string, fresh bool) (*sessions.Session, []crdt.Op) {
 	if ts.Aliases == nil {
 		ts.Aliases = map[string]string{}
 	}
@@ -505,17 +545,8 @@ func SyncTabs(local *sessions.Session, ts *TabSync, stateTabs, stateGroups *crdt
 	case len(curTabs) == 0 && len(ts.Tabs) > 0:
 		curTabs, curGroups = ts.Tabs, ts.Groups
 		ts.Empty = true
-	case ts.Empty && len(curTabs) > 0:
-		for k, v := range ts.Tabs {
-			if _, ok := curTabs[k]; !ok {
-				curTabs[k] = v
-			}
-		}
-		for k, v := range ts.Groups {
-			if _, ok := curGroups[k]; !ok {
-				curGroups[k] = v
-			}
-		}
+	case (ts.Empty || fresh) && len(curTabs) > 0:
+		curTabs, curGroups = restored(curTabs, curGroups, ts, stateTabs)
 		ts.Empty = false
 	}
 	out := crdt.Diff(TypeTab, ts.Tabs, curTabs, clock)

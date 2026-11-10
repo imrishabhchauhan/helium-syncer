@@ -80,9 +80,11 @@ type Config struct {
 // LiveTabs is the companion extension's view of open tabs, one profile
 // directory at a time.
 type LiveTabs interface {
-	// ReadTabs returns the open windows and tabs as a session. ok is false
-	// when the extension is not connected or does not report tabs.
-	ReadTabs(profileDir string) (s *sessions.Session, ok bool)
+	// ReadTabs returns the open windows and tabs as a session. fresh is set
+	// until a merge used the first report of a browser that just started
+	// (see merge.SyncTabs). ok is false when the extension is not connected
+	// or does not report tabs.
+	ReadTabs(profileDir string) (s *sessions.Session, fresh, ok bool)
 	// WriteTabs asks the browser to make its tabs match s, the merged
 	// session built from the last ReadTabs.
 	WriteTabs(profileDir string, s *sessions.Session) error
@@ -698,9 +700,9 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	done = stepIn(ctx, "tabs")
 	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
 	var local *sessions.Session
-	liveTabs := false
+	liveTabs, fresh := false, false
 	if cfg.LiveTabs != nil && !cfg.Off[KindTabs] {
-		local, liveTabs = cfg.LiveTabs.ReadTabs(dir)
+		local, fresh, liveTabs = cfg.LiveTabs.ReadTabs(dir)
 	}
 	if cfg.Off[KindTabs] || (cfg.WhileOpen && !liveTabs) {
 		// Off, or Helium is open and this profile's browser does not report
@@ -731,7 +733,7 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		}
 		return t
 	}
-	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf)
+	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf, fresh)
 	out = append(out, ops...)
 	if liveTabs {
 		// The browser owns its tabs while it runs: ask it to make the change.

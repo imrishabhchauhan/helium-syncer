@@ -141,9 +141,12 @@ func TestTabsInRealHelium(t *testing.T) {
 	t.Logf("first report: %s", tabsShape(r))
 
 	// 2. The app asks: close /b, open a page that moves, pin /a.
-	sess, ok := srv.ReadTabs(profile)
+	sess, fresh, ok := srv.ReadTabs(profile)
 	if !ok {
 		t.Fatal("ReadTabs: not connected")
+	}
+	if !fresh {
+		t.Fatal("the first report after the browser started should be marked fresh")
 	}
 	w := sess.Windows[0]
 	var kept []*sessions.Tab
@@ -161,6 +164,9 @@ func TestTabsInRealHelium(t *testing.T) {
 	w.Tabs = kept
 	if err := srv.WriteTabs(profile, sess); err != nil {
 		t.Fatal(err)
+	}
+	if _, fresh, _ := srv.ReadTabs(profile); fresh {
+		t.Fatal("after a merge used it, the start is dealt with; fresh must clear")
 	}
 	r = waitTabs(t, srv, profile, "close, open and pin", func(r *TabsReport) bool {
 		a, okA := find(r, func(t LiveTab) bool { return strings.HasSuffix(t.URL, "/a") })
@@ -185,7 +191,7 @@ func TestTabsInRealHelium(t *testing.T) {
 	})
 
 	// 4. A new group, and a new window.
-	sess, _ = srv.ReadTabs(profile)
+	sess, _, _ = srv.ReadTabs(profile)
 	tok := [2]uint64{7, 7}
 	sess.Groups[tok] = &sessions.Group{High: 7, Low: 7, Title: "Work", Color: 1}
 	for _, tb := range sess.Windows[0].Tabs {
@@ -211,14 +217,14 @@ func TestTabsInRealHelium(t *testing.T) {
 	t.Logf("group and window: %s", tabsShape(r))
 
 	// 5. Nothing changed: the same session again sends nothing.
-	sess, _ = srv.ReadTabs(profile)
+	sess, _, _ = srv.ReadTabs(profile)
 	if a, changed := planTabs(r, sess, func() string { srv.mu.Lock(); defer srv.mu.Unlock(); return srv.conns[profile].nonce }()); changed {
 		t.Fatalf("the browser's own tabs read back as a change: %+v", a)
 	}
 
 	// 6. Every tab of every window closes on the other computer: one window
 	// stays open with a new tab page, and Helium keeps running.
-	sess, _ = srv.ReadTabs(profile)
+	sess, _, _ = srv.ReadTabs(profile)
 	for _, w := range sess.Windows {
 		w.Tabs = nil
 	}

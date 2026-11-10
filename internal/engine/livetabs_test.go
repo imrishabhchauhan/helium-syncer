@@ -17,11 +17,11 @@ type browserTabs struct {
 	applied int
 }
 
-func (b *browserTabs) ReadTabs(dir string) (*sessions.Session, bool) {
+func (b *browserTabs) ReadTabs(dir string) (*sessions.Session, bool, bool) {
 	if dir != b.dir || b.sess == nil {
-		return nil, false
+		return nil, false, false
 	}
-	return b.sess, true
+	return b.sess, false, true
 }
 
 func (b *browserTabs) WriteTabs(dir string, s *sessions.Session) error {

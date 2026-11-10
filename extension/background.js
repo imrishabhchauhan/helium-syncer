@@ -248,7 +248,19 @@ async function sendTabs(why) {
       return;
     }
     lastLayout = layout;
+    // The first report since the browser started shows what Helium restored,
+    // which can be an older copy than the synced tabs; the app treats it so.
+    // Session storage is empty at each browser start and survives this
+    // worker being stopped, so a worker restart is not mistaken for a start.
+    let started = true;
+    try {
+      started = !!(await chrome.storage.session.get("reported")).reported;
+    } catch (e) {
+      // no session storage: never claim a start
+    }
+    if (!started) report.fresh = true;
     socket.send(JSON.stringify({ type: "tabs", version: VERSION, tabs: report, reason: why || "" }));
+    if (!started) await chrome.storage.session.set({ reported: true }).catch(() => {});
   } catch (e) {
     console.warn("Helium Syncer: could not send the tabs:", e);
   }

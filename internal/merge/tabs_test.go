@@ -19,6 +19,7 @@ type tabDevice struct {
 	clock        *crdt.Clock
 	seen         int
 	r            *rand.Rand
+	fresh        bool // the next sync is the first look after a start
 }
 
 func newTabDevice(name string, r *rand.Rand) *tabDevice {
@@ -62,7 +63,8 @@ func heliumRestore(r *rand.Rand, s *sessions.Session) *sessions.Session {
 
 func (d *tabDevice) sync(s *server) int {
 	incoming := append([]crdt.Op(nil), s.log[d.seen:]...)
-	projected, out := SyncTabs(d.sess, d.ts, d.tabs, d.groups, d.clock, incoming, func(u string) string { return "title of " + u })
+	projected, out := SyncTabs(d.sess, d.ts, d.tabs, d.groups, d.clock, incoming, func(u string) string { return "title of " + u }, d.fresh)
+	d.fresh = false
 	s.log = append(s.log, out...)
 	d.seen = len(s.log)
 	d.sess = heliumRestore(d.r, projected)

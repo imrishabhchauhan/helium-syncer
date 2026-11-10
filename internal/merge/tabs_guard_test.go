@@ -176,3 +176,47 @@ func TestTabsSyncable(t *testing.T) {
 		}
 	}
 }
+
+// Helium restored an older copy of the Mac's tabs (seen with the profile
+// picker): it still had a tab Windows closed, and lacked one Windows opened.
+// Neither travels; only a page opened right after the start does.
+func TestTabsRestoreIsNotThePersonsDoing(t *testing.T) {
+	s, mac, win := twoInSync(t, fivePages...)
+	w := normalWindows(win.sess)[0]
+	w.Tabs = append(w.Tabs[:len(w.Tabs)-1:len(w.Tabs)-1], &sessions.Tab{Navigations: nav("https://ei.study/")})
+	win.sync(s) // closed 16personalities, opened ei.study
+	mac.sync(s)
+	// Helium starts on the Mac from its older copy, and the person opens
+	// one page at once.
+	mac.sess = &sessions.Session{Windows: []*sessions.Window{window(append(append([]string(nil), fivePages...), "https://new.example/")...)},
+		Groups: map[[2]uint64]*sessions.Group{}}
+	mac.fresh = true
+	mac.sync(s)
+	win.sync(s)
+	v := view(win.sess)
+	if strings.Contains(v, "16personalities") {
+		t.Fatalf("a tab closed on Windows came back from the Mac's restore:\n%s", v)
+	}
+	if !strings.Contains(v, "https://ei.study/") {
+		t.Fatalf("a tab opened on Windows closed because the Mac's restore lacked it:\n%s", v)
+	}
+	if !strings.Contains(v, "https://new.example/") {
+		t.Fatalf("the page opened right after the start did not travel:\n%s", v)
+	}
+	if m := view(mac.sess); m != v {
+		t.Fatalf("devices differ\nmac:\n%s\nwin:\n%s", m, v)
+	}
+	// After that first look, closing is closing again.
+	mw := normalWindows(mac.sess)[0]
+	for i, tb := range mw.Tabs {
+		if strings.Contains(tb.Current().URL, "claude.ai") {
+			mw.Tabs = append(mw.Tabs[:i:i], mw.Tabs[i+1:]...)
+			break
+		}
+	}
+	mac.sync(s)
+	win.sync(s)
+	if strings.Contains(view(win.sess), "claude.ai") {
+		t.Fatalf("a tab closed on the Mac after the start stayed open on Windows")
+	}
+}
