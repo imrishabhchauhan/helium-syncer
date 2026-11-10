@@ -23,6 +23,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/cdp"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/profiles"
+	"github.com/imrishabhchauhan/helium-syncer/internal/sessions"
 	"github.com/imrishabhchauhan/helium-syncer/internal/testkit"
 )
 
@@ -135,10 +136,12 @@ func (sd *side) sync(t *testing.T, ctx context.Context) Report {
 			t.Logf("   %s sent: %v", sd.name, kinds)
 		}
 	}()
+	logSessions(t, sd.name, sd.ud)
 	rep, err := Run(ctx, sd.cfg)
 	if err != nil {
 		t.Fatalf("%s: sync: %v", sd.name, err)
 	}
+	t.Logf("%s sent by type: %v", sd.name, rep.SentByType)
 	if rep.Paused != "" {
 		t.Fatalf("%s: sync paused: %s", sd.name, rep.Paused)
 	}
@@ -384,4 +387,32 @@ func contains(xs []string, x string) bool {
 		}
 	}
 	return false
+}
+
+// logSessions shows what Helium saved for each profile, so a failure on a
+// new Helium says at once whether the tabs were saved, and whether the app
+// can read them. Shown only when a test fails.
+func logSessions(t *testing.T, name, ud string) {
+	t.Helper()
+	dirs, _ := filepath.Glob(filepath.Join(ud, "*", "Sessions"))
+	if len(dirs) == 0 {
+		t.Logf("   %s: no Sessions folder in any profile", name)
+	}
+	for _, d := range dirs {
+		files, _ := filepath.Glob(filepath.Join(d, "*"))
+		for _, f := range files {
+			info, _ := os.Stat(f)
+			line := fmt.Sprintf("   %s: %s/%s %d bytes", name, filepath.Base(filepath.Dir(d)), filepath.Base(f), info.Size())
+			if s, err := sessions.ReadFile(f); err != nil {
+				line += fmt.Sprintf(", cannot read: %v", err)
+			} else {
+				tabs := 0
+				for _, w := range s.Windows {
+					tabs += len(w.Tabs)
+				}
+				line += fmt.Sprintf(", %d window(s), %d tab(s)", len(s.Windows), tabs)
+			}
+			t.Log(line)
+		}
+	}
 }
