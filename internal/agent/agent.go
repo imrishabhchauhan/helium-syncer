@@ -520,13 +520,18 @@ func ask(what string) error {
 	return nil
 }
 
-// power returns the power state, read at most once a minute (on macOS a
-// reading starts a small program).
+// PowerEvery is how often the power state is read. On macOS a reading
+// starts two small programs (pmset), so once a minute was 120 program
+// starts an hour on battery; plugging in or out only changes how often
+// the agent pulls, which can wait a few minutes.
+const PowerEvery = 5 * time.Minute
+
+// power returns the power state, read at most every PowerEvery.
 func (a *Agent) power(now time.Time) power.State {
 	if a.Power == nil {
 		return power.State{Percent: -1}
 	}
-	if a.pwRead.IsZero() || now.Sub(a.pwRead) >= time.Minute || now.Before(a.pwRead) {
+	if a.pwRead.IsZero() || now.Sub(a.pwRead) >= PowerEvery || now.Before(a.pwRead) {
 		a.pw, a.pwRead = a.Power(), now
 	}
 	return a.pw
