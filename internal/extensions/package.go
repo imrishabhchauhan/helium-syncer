@@ -334,6 +334,10 @@ func ReplaceData(profile, id string, pkg []byte) error {
 }
 
 // updateSecure edits Secure Preferences and re-signs it for this device.
+// ErrUnknownSigning: Helium signed its settings in a way this version of
+// Helium Syncer cannot reproduce, so it does not write them.
+var ErrUnknownSigning = errors.New("this Helium signs its settings in a way Helium Syncer does not know yet; extensions wait for a Helium Syncer update")
+
 func updateSecure(profile, deviceID string, edit func(doc map[string]any), extraPaths ...string) error {
 	path := filepath.Join(profile, "Secure Preferences")
 	doc, err := readJSON(path)
@@ -341,6 +345,10 @@ func updateSecure(profile, deviceID string, edit func(doc map[string]any), extra
 		doc = map[string]any{"protection": map[string]any{"macs": map[string]any{}}}
 	} else if err != nil {
 		return err
+	} else if !prefhash.Verify(doc, prefhash.Calculator{DeviceID: deviceID}) {
+		// Helium signed this file in a way this version cannot reproduce:
+		// a write would be reset by Helium and switch extensions off.
+		return ErrUnknownSigning
 	}
 	edit(doc)
 	prefhash.Resign(doc, prefhash.Calculator{DeviceID: deviceID}, true, extraPaths...)

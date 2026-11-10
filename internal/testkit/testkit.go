@@ -79,7 +79,18 @@ func Start(ctx context.Context, o Options) (*Instance, error) {
 						return nil, err
 					}
 					in.probe = c
-					return in, in.Eval(ctx, "typeof probe", nil)
+					// The worker can be listed before its script has run:
+					// wait until probe exists (seen as "probe is not defined"
+					// on the first call, now and then).
+					for time.Now().Before(deadline) {
+						var kind string
+						if err := in.Eval(ctx, "typeof probe", &kind); err == nil && kind == "object" {
+							return in, nil
+						}
+						time.Sleep(200 * time.Millisecond)
+					}
+					in.Kill()
+					return nil, errors.New("testkit: probe extension did not finish loading")
 				}
 			}
 		}

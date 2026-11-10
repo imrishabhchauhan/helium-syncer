@@ -11,7 +11,7 @@ Your bookmarks, open tabs, tab groups, profiles, settings and extensions sync be
 
 > [!WARNING]
 > **Early version. Do not use it for important data yet.**
-> It works between a real Mac and a real Windows computer, and the tests pass. But there is no download yet, and when Helium updates, sync stops until a new Helium Syncer version is ready (see [Your data is safe](#your-data-is-safe)). Watch or star this repository to see when it is ready.
+> It works between a real Mac and a real Windows computer, and the tests pass. But there is no download yet: to try it now, [build it yourself](#build-it-yourself). Watch or star this repository to see when it is ready.
 
 ---
 
@@ -202,7 +202,7 @@ If Helium is not installed, the window tells you. It gives you a button to get H
 - **Never Helium's files while Helium is open.** Helium Syncer checks again before each write. While Helium is open, only bookmarks and tabs change, and only through Helium itself (the [helper extension](#the-helper-extension)).
 - **Safe with tabs.** If Helium is open with no window (on a Mac, after you close the last window), or if Helium is still starting, no tab closes on your other computer. If Helium brings back an older copy of your tabs when it starts, a tab that you closed on the other computer does not come back.
 - **A check before the first sync.** You see what will change. Nothing changes before you agree.
-- **Helium updates.** Helium Syncer syncs only with Helium versions that we tested. If a computer has a different version, Helium Syncer stops and tells you why. It does not guess. Your changes wait and are not lost. Today this means: **after each Helium update, sync waits until a new Helium Syncer version knows that Helium version.**
+- **Helium updates.** Sync goes on after a Helium update. Before Helium Syncer writes a file, it checks that it still understands how Helium stored it: it re-computes Helium's own signature on the settings and the checksum of the bookmarks. If one does not match, only that item waits, and the app tells you; everything else syncs on. Every day, GitHub runs all the real-Helium tests on the newest Helium release.
 - **Tested.** 128 automatic tests, with many random cases. Many use a real Helium browser on Windows and macOS, also two Helium browsers open at the same time. We also break the code on purpose to make sure that the tests find the problem.
 
 ## Privacy

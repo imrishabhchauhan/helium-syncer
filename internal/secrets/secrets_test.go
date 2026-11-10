@@ -26,8 +26,10 @@ func TestSaveLoadDelete(t *testing.T) {
 	if err != nil || string(got) != string(want) {
 		t.Fatalf("got %q, %v", got, err)
 	}
-	// On Windows the file on disk must not contain the secret in clear.
-	if entries, _ := os.ReadDir(dir); len(entries) > 0 {
+	// On Windows the file on disk must not contain the secret in clear. (Other
+	// systems besides macOS are not supported and keep a file only this user
+	// can read.)
+	if entries, _ := os.ReadDir(dir); runtime.GOOS == "windows" && len(entries) > 0 {
 		raw, _ := os.ReadFile(dir + string(os.PathSeparator) + entries[0].Name())
 		if string(raw) == string(want) {
 			t.Error("secret stored in clear text")

@@ -142,13 +142,14 @@ type Agent struct {
 	// connection ends. Nil means the agent asks at intervals (LivePull).
 	Watch func(ctx context.Context, news func()) error
 
-	pw          power.State
-	pwRead      time.Time
-	liveMu      sync.Mutex
-	liveDirty   bool
-	newsDirty   bool               // the server said the other computer sent changes
-	watching    bool               // Watch is connected
-	watchCancel context.CancelFunc // stops the Watch loop; nil when not running
+	pw           power.State
+	pwRead       time.Time
+	liveMu       sync.Mutex
+	liveDirty    bool
+	newsDirty    bool               // the server said the other computer sent changes
+	watching     bool               // Watch is connected
+	watchCancel  context.CancelFunc // stops the Watch loop; nil when not running
+	untestedSeen string             // the untested Helium version already logged
 }
 
 // liveNewsReason is the sync the server asked for: the other computer sent
@@ -744,6 +745,16 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 		return nil
 	}
 	a.Status.LastSync, a.Status.LastReport, a.Status.LastError, a.Status.Paused = a.Now(), rep, "", ""
+	if len(rep.Held) > 0 {
+		// Shown in the app and the tray: the person sees why an item waits.
+		a.Status.Paused = "Waiting for a Helium Syncer update: " + strings.Join(rep.Held, ", ") +
+			". This Helium stores them in a format Helium Syncer does not know yet. Everything else syncs."
+		a.logf("%s: %s", reason, a.Status.Paused)
+	}
+	if rep.Untested != "" && rep.Untested != a.untestedSeen {
+		a.untestedSeen = rep.Untested
+		a.logf("Helium %s is newer than the versions the tests ran on; syncing, with each file checked before it is written", rep.Untested)
+	}
 	if rep.Sent+rep.Received > 0 || (reason != "periodic" && reason != liveCheckReason) {
 		a.logf("%s: sent %d, received %d, wrote %v, took %s", reason, rep.Sent, rep.Received, rep.Written, tookLine(rep.Took))
 	}
