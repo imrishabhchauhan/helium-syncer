@@ -211,6 +211,13 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 			// The same tree again (the extension reports after it applied
 			// what we sent) is no change, and must not start a sync.
 			changed := !c.seen || !sameShape(c.nodes, m.Nodes)
+			if !c.seen {
+				// A new connection is a browser that just started, so its
+				// file is current: learn ids and dates from it again. What
+				// was learned before may come from an older file (another
+				// sync may have rewritten it while Helium was closed).
+				delete(s.guid, profile)
+			}
 			c.profile, c.nodes, c.seen = profile, m.Nodes, true
 			s.conns[profile] = c
 			s.mu.Unlock()

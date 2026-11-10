@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -160,5 +162,61 @@ func TestNoEndlessLoopBetweenAppAndBrowser(t *testing.T) {
 	var m Msg
 	if err := wsjson.Read(rctx, ws, &m); err == nil {
 		t.Fatalf("the app sent %q for a tree the browser already has", m.Type)
+	}
+}
+
+// What the app learned from the Bookmarks file must be learned again when a
+// browser connects anew: the file may have been rewritten while Helium was
+// closed. Seen on the Mac: stale dates were sent again on every start.
+func TestANewConnectionLearnsTheFileAgain(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	const epochMs = 11644473600000
+	nodes := browserNodes()
+	nodes[2].DateAdded = 13300000000000000/1000 - epochMs
+
+	connectOnce := func() string {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+			HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close(websocket.StatusNormalClosure, "")
+		wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+		var hello Msg
+		wsjson.Read(ctx, ws, &hello)
+		wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: nodes})
+		for !s.Connected(dir) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		f, _ := s.ReadBookmarks(dir)
+		date := ""
+		walkFile(f, func(n map[string]any, _, _ string) {
+			if str(n["name"]) == "SVGL" {
+				date = str(n["date_added"])
+			}
+		})
+		return date
+	}
+	if got := connectOnce(); got != "13300000000000000" {
+		t.Fatalf("first connection: %s", got)
+	}
+	// Helium closes, a sync rewrites the file with the exact time, Helium
+	// starts again and connects.
+	os.WriteFile(filepath.Join(dir, "Bookmarks"), []byte(strings.Replace(fileJSON,
+		`"date_added":"13300000000000000","guid":"aaaaaaaa-0000-4000-8000-000000000001"`,
+		`"date_added":"13300000000000456","guid":"aaaaaaaa-0000-4000-8000-000000000001"`, 1)), 0o600)
+	for s.Connected(dir) {
+		time.Sleep(10 * time.Millisecond) // the first browser has gone
+	}
+	if got := connectOnce(); got != "13300000000000456" {
+		t.Errorf("after reconnecting, date_added %s: the old file was still used", got)
 	}
 }
