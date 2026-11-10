@@ -9,12 +9,16 @@
   "routes": [{ "pattern": "helium.aiwithrishabh.com", "custom_domain": true }],
   "d1_databases": [{ "binding": "DB", "database_name": "helium-syncer", "database_id": "1a5567ff-6569-4439-aa24-a7eeb7e0a529" }],
   "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-blobs" }],
+  // One Notifier per account holds its computers' watch sockets (see src/index.ts).
+  "durable_objects": { "bindings": [{ "name": "NOTIFY", "class_name": "Notifier" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Notifier"] }],
   "env": {
     // Local tests: `npx wrangler dev --env dev --local`.
     "dev": {
       "routes": [],
       "d1_databases": [{ "binding": "DB", "database_name": "helium-syncer-dev", "database_id": "local-dev" }],
-      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-dev" }]
+      "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "helium-syncer-dev" }],
+      "durable_objects": { "bindings": [{ "name": "NOTIFY", "class_name": "Notifier" }] }
     }
   }
 }

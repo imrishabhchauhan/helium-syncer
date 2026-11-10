@@ -386,3 +386,76 @@ func TestLiveCheckSyncsOnlyWhenTheServerHasNews(t *testing.T) {
 		mu.Unlock()
 	}
 }
+
+// With the server saying when there is news, a change from the other
+// computer syncs at once, the regular server checks almost stop (battery),
+// and the connection closes when Helium quits.
+func TestWatchReplacesFrequentChecks(t *testing.T) {
+	f := &fake{open: true}
+	a := newTestAgent(f)
+	a.Timing.LivePull = 20 * time.Millisecond
+	a.Timing.LivePullWatching = time.Hour
+	var mu sync.Mutex
+	runs, checks, watching := 0, 0, 0
+	a.SyncLive = func(context.Context) (engine.Report, error) {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		return engine.Report{}, nil
+	}
+	a.CheckLive = func(context.Context) (bool, error) {
+		mu.Lock()
+		checks++
+		mu.Unlock()
+		return false, nil
+	}
+	a.LiveConnected = func() bool { return true }
+	newsCh := make(chan struct{})
+	a.Watch = func(ctx context.Context, news func()) error {
+		mu.Lock()
+		watching++
+		mu.Unlock()
+		news() // connected
+		for {
+			select {
+			case <-ctx.Done():
+				mu.Lock()
+				watching--
+				mu.Unlock()
+				return nil
+			case <-newsCh:
+				news()
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	r0, c0 := runs, checks
+	mu.Unlock()
+	if r0 < 1 {
+		t.Fatalf("the first news (on connecting) did not sync")
+	}
+	if c0 > 2 {
+		t.Fatalf("%d regular checks in 200 ms while the server is watching; want almost none", c0)
+	}
+	newsCh <- struct{}{}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	if runs <= r0 {
+		t.Fatalf("news from the server did not start a sync")
+	}
+	mu.Unlock()
+	f.setOpen(false)
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	w := watching
+	mu.Unlock()
+	if w != 0 {
+		t.Fatalf("the server connection stayed open after Helium quit")
+	}
+	cancel()
+	<-done
+}

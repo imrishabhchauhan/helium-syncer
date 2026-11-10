@@ -182,6 +182,11 @@ func stepIn(ctx context.Context, name string) func() {
 	return func() {}
 }
 
+// GateReuse is how long a passed version check holds for syncs while Helium
+// is open. Helium cannot update itself while it runs, so this computer's
+// version is fixed meanwhile; the other computer's is checked again after.
+const GateReuse = 30 * time.Minute
+
 // ErrHeliumRunning: the folder is in use; try again after Helium quits.
 var ErrHeliumRunning = errors.New("Helium is open on this profile folder; sync runs when it is closed")
 
@@ -254,18 +259,28 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		wg       sync.WaitGroup
 	)
 	done = rep.step("server")
-	wg.Add(3)
-	go func() { defer wg.Done(); peers, vErr = cfg.Transport.Versions(ctx, cfg.DeviceID) }()
-	// This computer's name and Helium version, for the other computers (also
-	// when the gate pauses: they then see which version this one has).
-	go func() { defer wg.Done(); cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version) }()
+	// A sync while Helium is open runs on every bookmark or tab change: it
+	// reuses a version check that passed a short while ago with the same
+	// Helium version, so it is one request, not three (battery, and speed).
+	gateFresh := cfg.WhileOpen && st.GateVersion == version &&
+		cfg.Now().Sub(time.UnixMilli(st.GateChecked)) < GateReuse && !cfg.Now().Before(time.UnixMilli(st.GateChecked))
+	if !gateFresh {
+		wg.Add(2)
+		go func() { defer wg.Done(); peers, vErr = cfg.Transport.Versions(ctx, cfg.DeviceID) }()
+		// This computer's name and Helium version, for the other computers
+		// (also when the gate pauses: they then see which version this one has).
+		go func() { defer wg.Done(); cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version) }()
+	}
+	wg.Add(1)
 	go func() { defer wg.Done(); incoming, next, pErr = cfg.Transport.Pull(ctx, st.Cursor) }()
 	wg.Wait()
 	done()
 	if vErr != nil {
 		return rep, vErr
 	}
-	if err := helium.CheckVersions(version, peers); err != nil {
+	if gateFresh {
+		// passed recently; nothing to check
+	} else if err := helium.CheckVersions(version, peers); err != nil {
 		var ge *helium.GateError
 		if errors.As(err, &ge) {
 			rep.Paused = ge.Message
@@ -275,6 +290,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	if pErr != nil {
 		return rep, pErr
+	}
+	if !gateFresh {
+		st.GateChecked, st.GateVersion = cfg.Now().UnixMilli(), version
 	}
 	clock := crdt.NewClock(cfg.DeviceID, func() int64 { return cfg.Now().UnixMilli() })
 	clock.Restore(st.Clock)
@@ -668,8 +686,15 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	done()
 	done = stepIn(ctx, "history")
 	histOps := append(byType[merge.TypeVisit], byType[merge.TypeTitle]...)
-	if hp := filepath.Join(dir, "History"); exists(hp) && !cfg.Off[KindHistory] {
+	hp := filepath.Join(dir, "History")
+	seen := fileStamp(hp)
+	if seen != "" && seen == ps.HistorySeen && len(histOps) == 0 && !cfg.Off[KindHistory] {
+		// Helium has not run since the last history sync, and nothing came.
+	} else if exists(hp) && !cfg.Off[KindHistory] {
 		if err := closed(cfg); err != nil {
+			return nil, err
+		}
+		if err := ps.loadHistory(cfg.StateDir); err != nil {
 			return nil, err
 		}
 		db, err := history.Open(hp)
@@ -684,7 +709,17 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		}
 		ps.HistoryBase = hb
 		out = append(out, ops...)
-	} else {
+		if len(ops)+len(histOps) > 0 {
+			ps.changedHistory()
+		}
+		ps.HistorySeen = fileStamp(hp)
+	} else if len(histOps) > 0 {
+		// Kept for when this profile's history is synced. Only now is the
+		// history state read at all.
+		if err := ps.loadHistory(cfg.StateDir); err != nil {
+			return nil, err
+		}
+		ps.changedHistory()
 		for _, op := range histOps {
 			clock.Observe(op.Stamp)
 			if op.Type == merge.TypeVisit {
@@ -726,7 +761,13 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 			}
 		}
 	}
+	// A tab opened for another computer's page gets that page's title from
+	// synced history, in the session file only: a live browser loads the
+	// page and shows its own title, so history is not read for it.
 	titleOf := func(u string) string {
+		if liveTabs || ps.loadHistory(cfg.StateDir) != nil {
+			return ""
+		}
 		var t string
 		if v, ok := ps.Titles.Get(u); ok {
 			json.Unmarshal(v, &t)
@@ -761,6 +802,15 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		}
 	}
 	return out, nil
+}
+
+// fileStamp is a file's size and change time, or "" when it is missing.
+func fileStamp(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d@%d", info.Size(), info.ModTime().UnixNano())
 }
 
 // countTypes counts ops per data type (without the profile scope).

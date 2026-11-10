@@ -5,10 +5,61 @@
 // account by proving it knows the account's sync code (it sends a secret
 // derived from the code; the server keeps only its SHA-256). The server
 // never sees the code or the encryption key, so it cannot read anything.
+//
+// A computer that wants changes as they happen keeps one WebSocket open on
+// /v1/watch. When another computer of the same account sends a batch, the
+// server says "news" on it, and the computer pulls. The socket is held by a
+// Durable Object that hibernates: an open, quiet socket costs nothing, and
+// the computer only sends a protocol ping every few minutes, which
+// Cloudflare answers without waking anything. That replaces asking every few
+// seconds, which on a laptop on battery wakes the network each time.
+
+import { DurableObject } from "cloudflare:workers";
 
 export interface Env {
   DB: D1Database;
   BLOBS: R2Bucket;
+  NOTIFY: DurableObjectNamespace<Notifier>;
+}
+
+// Notifier holds the watching sockets of one account (one object per
+// account, named by its id). It never sees any data: only who sent a batch.
+export class Notifier extends DurableObject<Env> {
+  async fetch(req: Request): Promise<Response> {
+    const device = req.headers.get("x-helium-device") ?? "";
+    if (new URL(req.url).pathname === "/notify") {
+      const { from, seq } = (await req.json()) as { from: string; seq: number };
+      const msg = JSON.stringify({ type: "news", seq });
+      for (const ws of this.ctx.getWebSockets()) {
+        const att = ws.deserializeAttachment() as { device?: string } | null;
+        if (att?.device === from) continue; // the sender already knows
+        try {
+          ws.send(msg);
+        } catch {
+          // closing; the computer reconnects and pulls anyway
+        }
+      }
+      return new Response(null, { status: 204 });
+    }
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ device });
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // A computer never needs to say anything on the socket; ignore it.
+  async webSocketMessage(): Promise<void> {}
+}
+
+// GET /v1/watch — WebSocket that says "news" when another computer sends.
+async function watch(req: Request, env: Env) {
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+    throw new HttpError(426, "upgrade", "This address expects a WebSocket.");
+  }
+  const me = await authed(req, env);
+  const headers = new Headers(req.headers);
+  headers.set("x-helium-device", me.id);
+  return env.NOTIFY.getByName(me.account_id).fetch(new Request(req.url, { headers }));
 }
 
 const MAX_ENVELOPE = 512 * 1024; // bytes of ciphertext per batch
@@ -163,7 +214,7 @@ async function announce(req: Request, env: Env) {
 
 // --- envelopes ---------------------------------------------------------------
 
-async function pushEnvelopes(req: Request, env: Env) {
+async function pushEnvelopes(req: Request, env: Env, ctx: ExecutionContext) {
   const me = await authed(req, env);
   const b = await body<{ items: { nonce: string; ciphertext: string }[] }>(req);
   if (!Array.isArray(b.items) || b.items.length === 0 || b.items.length > 50) {
@@ -186,6 +237,12 @@ async function pushEnvelopes(req: Request, env: Env) {
   stmts.push(env.DB.prepare("UPDATE accounts SET storage = storage + ?1 WHERE id = ?2").bind(total, me.account_id));
   const res = await env.DB.batch(stmts);
   const seqs = res.slice(0, b.items.length).map((r) => (r.results?.[0] as { seq: number }).seq);
+  // Tell the account's other watching computers, after answering this one.
+  ctx.waitUntil(
+    env.NOTIFY.getByName(me.account_id)
+      .fetch("https://notify/notify", { method: "POST", body: JSON.stringify({ from: me.id, seq: seqs[seqs.length - 1] }) })
+      .then(() => undefined, (e) => console.error("notify failed", e)),
+  );
   return json({ seqs });
 }
 
@@ -232,7 +289,7 @@ async function getBlob(req: Request, env: Env, hash: string) {
 // --- router ------------------------------------------------------------------
 
 export default {
-  async fetch(req: Request, env: Env): Promise<Response> {
+  async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
     const p = url.pathname;
     const m = req.method;
@@ -249,7 +306,8 @@ export default {
       if (m === "PUT" && p === "/v1/devices/me") return await announce(req, env);
       let mm = p.match(/^\/v1\/devices\/([0-9a-f-]{36})\/remove$/);
       if (m === "POST" && mm) return await removeDevice(req, env, mm[1]);
-      if (m === "POST" && p === "/v1/envelopes") return await pushEnvelopes(req, env);
+      if (m === "POST" && p === "/v1/envelopes") return await pushEnvelopes(req, env, ctx);
+      if (m === "GET" && p === "/v1/watch") return await watch(req, env);
       if (m === "GET" && p === "/v1/envelopes") return await pullEnvelopes(req, env, url);
       mm = p.match(/^\/v1\/blobs\/([0-9a-f]{64})$/);
       if (mm && m === "PUT") return await putBlob(req, env, mm[1]);
