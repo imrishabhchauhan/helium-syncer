@@ -53,6 +53,25 @@ type Config struct {
 	// Running reports whether Helium is open; default helium.IsRunning.
 	// Tests replace it to open Helium in the middle of a sync.
 	Running func(userData string) (bool, error)
+	// Live, when set, syncs bookmarks through the browser itself instead of
+	// its files, so they can sync while Helium is open. A file-based tool
+	// cannot change a running Chromium: it keeps bookmarks in memory and
+	// rewrites the file when it quits, throwing the change away. The
+	// companion extension reads and writes them through Helium's own API.
+	// Nil, or a profile the extension is not connected for, falls back to
+	// the Bookmarks file exactly as before.
+	Live LiveBookmarks
+}
+
+// LiveBookmarks is the companion extension, seen from the engine. One
+// profile directory at a time, the same path the Bookmarks file sits in.
+type LiveBookmarks interface {
+	// ReadBookmarks returns the tree the open browser holds right now.
+	// ok is false when no extension is connected for this profile, and the
+	// caller then reads the file instead.
+	ReadBookmarks(profileDir string) (f *bookmarks.File, ok bool)
+	// WriteBookmarks asks the browser to make its tree match f.
+	WriteBookmarks(profileDir string, f *bookmarks.File) error
 }
 
 // closed is checked right before each write into Helium's folder: if a
@@ -486,20 +505,35 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		keep(clock, byType[merge.TypeBookmark], func(crdt.Op) *crdt.Map { return ps.Bookmarks })
 	} else {
 		bmPath := filepath.Join(dir, "Bookmarks")
-		raw, err := os.ReadFile(bmPath)
-		if errors.Is(err, fs.ErrNotExist) {
-			raw = []byte(emptyBookmarks)
-		} else if err != nil {
-			return nil, err
+		var bf *bookmarks.File
+		var raw []byte
+		live := false
+		if cfg.Live != nil {
+			bf, live = cfg.Live.ReadBookmarks(dir)
 		}
-		bf, err := bookmarks.Parse(raw)
-		if err != nil {
-			return nil, err
+		if !live {
+			var err error
+			raw, err = os.ReadFile(bmPath)
+			if errors.Is(err, fs.ErrNotExist) {
+				raw = []byte(emptyBookmarks)
+			} else if err != nil {
+				return nil, err
+			}
+			bf, err = bookmarks.Parse(raw)
+			if err != nil {
+				return nil, err
+			}
 		}
 		bf, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])
 		ps.BookmarksBase = bmBase
 		out = append(out, ops...)
-		if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
+		if live {
+			// The browser owns the file while it is open, so hand the merged
+			// tree to the extension and never touch the file ourselves.
+			if err := cfg.Live.WriteBookmarks(dir, bf); err != nil {
+				return nil, err
+			}
+		} else if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
 			if err := noteCreate(cfg, j, bmPath); err != nil {
 				return nil, err
 			}
