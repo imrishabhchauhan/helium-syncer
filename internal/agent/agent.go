@@ -243,14 +243,10 @@ func New() (*Agent, error) {
 			return engine.Report{}, nil // the person turned bookmarks off
 		}
 		ec.Live = a.Live
-		off := map[string]bool{}
-		for _, k := range engine.Kinds {
-			off[k] = k != engine.KindBookmarks
-		}
-		ec.Off = off
-		// Helium is open on purpose here, so the engine's "stop if Helium
-		// opened" guard must not fire: nothing below writes a Helium file.
-		ec.Running = func(string) (bool, error) { return false, nil }
+		// Helium is open: the engine writes none of its files, syncs the
+		// bookmarks of connected browsers, and keeps the rest for the sync
+		// after Helium quits.
+		ec.WhileOpen = true
 		return runLow(ctx, ec)
 	}
 	return a, nil
@@ -553,6 +549,8 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	case errors.Is(err, engine.ErrBusy):
 		a.logf("%s: another sync is running; will try again", reason)
 		return nil
+	case errors.Is(err, engine.ErrHeliumRunning) && (reason == liveReason || reason == liveCheckReason):
+		return nil // waits for the sync after Helium quits; nothing to report
 	case errors.Is(err, engine.ErrHeliumRunning):
 		a.logf("%s: Helium opened before the sync started; will retry after it quits", reason)
 		return nil
