@@ -345,7 +345,11 @@ func runAgent() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	fmt.Println("Helium Syncer is watching Helium. It syncs after Helium quits. Ctrl+C to stop.")
+	// The companion extension connects here, so bookmarks can sync while
+	// Helium is open. Without the extension nothing changes: everything
+	// still waits for Helium to quit.
+	go agent.Serve(lock, func() {}, nil, a.Live.Handler())
+	fmt.Println("Helium Syncer is watching Helium. Bookmarks and open tabs sync while it is open; everything else after it quits. Ctrl+C to stop.")
 	return a.Run(ctx)
 }
 

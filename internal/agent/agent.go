@@ -13,14 +13,17 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
+	"github.com/imrishabhchauhan/helium-syncer/internal/cloud"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
+	"github.com/imrishabhchauhan/helium-syncer/internal/live"
 	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 )
 
@@ -31,13 +34,35 @@ type Timing struct {
 	AfterQuit          time.Duration // wait after Helium quits (it flushes files)
 	WhileClosed        time.Duration // pull interval while Helium is closed (plugged in)
 	WhileClosedBattery time.Duration // the same on battery
-	MaxBackoff         time.Duration
+	// LivePull is how often, while Helium is open and the companion
+	// extension is connected, the agent asks the server for changes from the
+	// other computer when the server cannot tell it (Watch is not connected).
+	// Zero turns it off.
+	LivePull        time.Duration
+	LivePullBattery time.Duration // the same on battery
+	// LivePullWatching is the same while Watch is connected: the server says
+	// when there is news, so this is only a safety net.
+	LivePullWatching time.Duration
+	// LiveBatchBattery is, on battery, the least time between two syncs
+	// while Helium is open: changes made here and changes from the other
+	// computer wait, and go in one sync (the owner's choice: battery
+	// before speed). Zero syncs each change at once.
+	LiveBatchBattery time.Duration
+	MaxBackoff       time.Duration
 }
 
 // DefaultTiming is used by the real agent. A check is one cheap file test;
 // a pull is one small download when nothing changed.
 var DefaultTiming = Timing{Poll: 5 * time.Second, PollBattery: 15 * time.Second, AfterQuit: 4 * time.Second,
-	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute, MaxBackoff: 30 * time.Minute}
+	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute,
+	// Plugged in, the server says when there is news (Watch), so changes
+	// from the other computer arrive in about a second, with a safety-net
+	// check every 5 minutes; without Watch, a check every 5 s. On battery
+	// there is no Watch (its news would wake the network between batches):
+	// one small check every 5 minutes, and at most one sync in 5 minutes.
+	LivePull: 5 * time.Second, LivePullBattery: 5 * time.Minute, LivePullWatching: 5 * time.Minute,
+	LiveBatchBattery: 5 * time.Minute,
+	MaxBackoff:       30 * time.Minute}
 
 // Battery modes (app.Config.Battery).
 const (
@@ -95,9 +120,151 @@ type Agent struct {
 	Power func() power.State
 	// Mode is the battery mode (BatteryBalanced when nil or empty).
 	Mode func() string
+	// Live is the companion extension's end of things. Bookmarks sync
+	// through it while Helium is open; everything else still waits for
+	// Helium to quit, because only the browser can change itself safely.
+	Live *live.Server
+	// SyncLive syncs bookmarks only, through the open browser; replaceable
+	// in tests. Nil means live syncing is off.
+	SyncLive func(ctx context.Context) (engine.Report, error)
+	// LiveConnected reports whether any browser has the companion extension
+	// connected; replaceable in tests.
+	LiveConnected func() bool
+	// CheckLive asks the server, cheaply, whether the other computer sent a
+	// change; the regular live check runs a full sync only when it did.
+	// Nil runs the full sync every time. Replaceable in tests.
+	CheckLive func(ctx context.Context) (bool, error)
+	// synced receives the server cursor after each successful sync, for
+	// CheckLive to go on from.
+	synced func(cursor string)
+	// Watch keeps a connection on which the server says when the other
+	// computer sent changes, calling news for each; it returns when the
+	// connection ends. Nil means the agent asks at intervals (LivePull).
+	Watch func(ctx context.Context, news func()) error
 
-	pw     power.State
-	pwRead time.Time
+	pw          power.State
+	pwRead      time.Time
+	liveMu      sync.Mutex
+	liveDirty   bool
+	newsDirty   bool               // the server said the other computer sent changes
+	watching    bool               // Watch is connected
+	watchCancel context.CancelFunc // stops the Watch loop; nil when not running
+}
+
+// liveNewsReason is the sync the server asked for: the other computer sent
+// changes. It runs the same sync as liveReason.
+const liveNewsReason = "live news"
+
+// isLive reports whether a sync reason is one that runs while Helium is open.
+func isLive(reason string) bool {
+	return reason == liveReason || reason == liveCheckReason || reason == liveNewsReason
+}
+
+// markNews records that the server said there is news.
+func (a *Agent) markNews() {
+	a.liveMu.Lock()
+	a.newsDirty, a.watching = true, true
+	a.liveMu.Unlock()
+	a.Wake()
+}
+
+func (a *Agent) takeNews() bool {
+	a.liveMu.Lock()
+	defer a.liveMu.Unlock()
+	n := a.newsDirty
+	a.newsDirty = false
+	return n
+}
+
+func (a *Agent) isWatching() bool {
+	a.liveMu.Lock()
+	defer a.liveMu.Unlock()
+	return a.watching
+}
+
+// setWatch starts or stops the Watch loop. It runs only while Helium is
+// open with the extension connected: only then does news need to arrive at
+// once, and otherwise the connection would cost battery for nothing.
+func (a *Agent) setWatch(ctx context.Context, want bool) {
+	if a.Watch == nil || want == (a.watchCancel != nil) {
+		return
+	}
+	if !want {
+		a.watchCancel()
+		a.watchCancel = nil
+		a.liveMu.Lock()
+		a.watching = false
+		a.liveMu.Unlock()
+		return
+	}
+	wctx, cancel := context.WithCancel(ctx)
+	a.watchCancel = cancel
+	go func() {
+		wait := 5 * time.Second
+		for {
+			err := a.Watch(wctx, a.markNews)
+			a.liveMu.Lock()
+			a.watching = false
+			a.liveMu.Unlock()
+			if wctx.Err() != nil {
+				return
+			}
+			if errors.Is(err, cloud.ErrNoWatch) {
+				a.logf("the sync server cannot say when there are changes; asking at intervals")
+				wait = time.Hour
+			} else if err != nil {
+				wait = min(2*wait, 5*time.Minute)
+			}
+			select {
+			case <-wctx.Done():
+				return
+			case <-time.After(wait):
+			}
+		}
+	}()
+}
+
+// ExtensionID is the companion extension's fixed id. The manifest pins it
+// with a public key, so it is the same on every computer, and the agent
+// accepts a connection from this origin and no other.
+const ExtensionID = "mhealbgfgbmpmodihicdniadpbkdbkkl"
+
+// liveReason marks the one sync that may run while Helium is open.
+const liveReason = "live bookmarks"
+
+// liveCheckReason is the regular ask for the other computer's bookmark
+// changes while Helium is open. It runs the same bookmarks-only sync.
+const liveCheckReason = "live check"
+
+// Wake asks for a sync as soon as the loop can (it never blocks).
+func (a *Agent) Wake() {
+	select {
+	case a.Trigger <- struct{}{}:
+	default:
+	}
+}
+
+// markLive records that a connected browser changed its bookmarks.
+func (a *Agent) markLive() {
+	a.liveMu.Lock()
+	a.liveDirty = true
+	a.liveMu.Unlock()
+	a.Wake()
+}
+
+// takeLive reports whether a live bookmark sync is owed, and clears the mark
+// so an unchanged browser is never synced again and again.
+func (a *Agent) takeLive() bool {
+	if a.SyncLive == nil {
+		return false
+	}
+	a.liveMu.Lock()
+	defer a.liveMu.Unlock()
+	if !a.liveDirty {
+		return false
+	}
+	a.liveDirty = false
+	return true
 }
 
 // New builds the real agent for the saved config.
@@ -117,6 +284,11 @@ func New() (*Agent, error) {
 	a.Running = func() (bool, error) { return helium.IsRunning(cfg.UserData) }
 	a.Power = power.Read
 	a.Mode = configMode()
+	a.Live = live.New(cfg.UserData)
+	a.Live.KeysFile = filepath.Join(app.Dir(), "live-keys.json")
+	a.Live.AllowOrigin = live.OriginOf(ExtensionID)
+	a.Live.Changed = func(string) { a.markLive() }
+	a.LiveConnected = func() bool { return len(a.Live.Profiles()) > 0 }
 	a.Sync = func(ctx context.Context) (engine.Report, error) {
 		c, err := app.Load() // pick up changes made from the command line
 		if err != nil {
@@ -130,7 +302,18 @@ func New() (*Agent, error) {
 		if err != nil {
 			return engine.Report{}, err
 		}
+		ec.Live = a.Live
+		// Tabs come from the session files here: Helium is closed, and a
+		// browser connection still listed may be one that just went away.
 		rep, err := runLow(ctx, ec)
+		if err == nil {
+			a.synced(rep.Cursor)
+		}
+		// Helium is closed and its files are settled: the one moment the
+		// companion extension can be added to a profile.
+		if err == nil && !(ec.Off[engine.KindBookmarks] && ec.Off[engine.KindTabs]) {
+			a.ensureCompanion(ec)
+		}
 		// Load again: settings may have changed while the sync ran.
 		if c, lerr := app.Load(); lerr == nil {
 			if err == nil && rep.Paused == "" {
@@ -142,7 +325,111 @@ func New() (*Agent, error) {
 		}
 		return rep, err
 	}
+	// Bookmarks and open tabs only, through the open browser. Everything
+	// else keeps its own rule: Helium's files are not touched while it runs.
+	a.SyncLive = func(ctx context.Context) (engine.Report, error) {
+		c, err := app.Load()
+		if err != nil {
+			return engine.Report{}, err
+		}
+		if !c.Connected() || !c.SetupDone {
+			return engine.Report{}, ErrNotSetUp
+		}
+		ec, err := c.EngineConfig()
+		if err != nil {
+			return engine.Report{}, err
+		}
+		if ec.Off[engine.KindBookmarks] && ec.Off[engine.KindTabs] {
+			return engine.Report{}, nil // the person turned both off
+		}
+		ec.Live = a.Live
+		ec.LiveTabs = a.Live
+		// Helium is open: the engine writes none of its files, syncs the
+		// bookmarks and tabs of connected browsers, and keeps the rest for
+		// the sync after Helium quits.
+		ec.WhileOpen = true
+		rep, err := runLow(ctx, ec)
+		if err == nil {
+			a.synced(rep.Cursor)
+		}
+		return rep, err
+	}
+	// The regular check while Helium is open: one small request, with the
+	// connection details kept between checks (reading them involves the
+	// system key store).
+	var (
+		peekMu     sync.Mutex
+		peekCursor string
+		peekClient engine.Transport
+		peekState  string
+		peekDevice string
+		peekAt     time.Time
+	)
+	a.synced = func(cursor string) {
+		peekMu.Lock()
+		peekCursor = cursor
+		peekMu.Unlock()
+	}
+	a.Watch = func(ctx context.Context, news func()) error {
+		c, err := app.Load()
+		if err != nil {
+			return err
+		}
+		cl, err := c.Client()
+		if err != nil {
+			return err
+		}
+		return cl.Watch(ctx, cloud.WatchPing, news)
+	}
+	a.CheckLive = func(ctx context.Context) (bool, error) {
+		peekMu.Lock()
+		defer peekMu.Unlock()
+		if peekClient == nil || time.Since(peekAt) > 10*time.Minute {
+			c, err := app.Load()
+			if err != nil {
+				return true, err
+			}
+			cl, err := c.Client()
+			if err != nil {
+				return true, err
+			}
+			peekClient, peekState, peekDevice, peekAt = cl, c.StateDir(), c.DeviceID, time.Now()
+		}
+		changed, err := engine.Peek(ctx, peekClient, peekState, peekDevice, &peekCursor)
+		if err != nil {
+			peekClient = nil // build it again next time
+		}
+		return changed, err
+	}
 	return a, nil
+}
+
+// ensureCompanion installs the companion extension in every synced profile
+// that lacks it. A failure is logged and never fails the sync: without the
+// extension everything still syncs when Helium quits, as before.
+func (a *Agent) ensureCompanion(ec engine.Config) {
+	links, err := engine.Links(ec.StateDir, ec.DeviceID)
+	if err != nil {
+		a.logf("companion extension: cannot list synced profiles: %v", err)
+		return
+	}
+	var dirs []string
+	for d := range links {
+		dirs = append(dirs, filepath.Join(ec.UserData, d))
+	}
+	c := Companion{
+		Dir:       filepath.Join(app.Dir(), "extension"),
+		MachineID: ec.MachineID,
+		GOOS:      runtime.GOOS,
+		Running:   func() (bool, error) { return helium.IsRunning(ec.UserData) },
+	}
+	done, err := c.Ensure(dirs)
+	for _, p := range done {
+		a.logf("companion extension installed in %s; bookmarks sync live from the next start", filepath.Base(p))
+	}
+	if err != nil {
+		a.logf("companion extension: %v", err)
+	}
 }
 
 // runLow runs a sync at low priority, so the computer stays quiet and cool.
@@ -183,10 +470,23 @@ func Lock() (net.Listener, error) {
 }
 
 // ServeShow answers "show your window" and "quit" from another copy of the
-// app, on the lock port. Websites cannot send the custom header without a
-// CORS preflight, which is refused, so they cannot trigger either.
+// app, on the lock port.
 func ServeShow(l net.Listener, show, quit func()) error {
+	return Serve(l, show, quit, nil)
+}
+
+// Serve answers "show your window" and "quit" from another copy of the app,
+// and, when liveHandler is given, the companion extension's connection on
+// live.Path. Websites cannot send the custom header without a CORS
+// preflight, which is refused, so they cannot trigger show or quit; the
+// extension's connection is gated on its Origin instead, which the browser
+// sets itself and a page cannot forge.
+func Serve(l net.Listener, show, quit func(), liveHandler http.Handler) error {
 	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if liveHandler != nil && r.URL.Path == live.Path {
+			liveHandler.ServeHTTP(w, r)
+			return
+		}
 		what := r.Header.Get("X-Helium-Syncer")
 		if r.Method != http.MethodPost || r.Host != LockAddr || r.URL.Path != "/"+what || (what != "show" && what != "quit") {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -227,13 +527,18 @@ func ask(what string) error {
 	return nil
 }
 
-// power returns the power state, read at most once a minute (on macOS a
-// reading starts a small program).
+// PowerEvery is how often the power state is read. On macOS a reading
+// starts two small programs (pmset), so once a minute was 120 program
+// starts an hour on battery; plugging in or out only changes how often
+// the agent pulls, which can wait a few minutes.
+const PowerEvery = 5 * time.Minute
+
+// power returns the power state, read at most every PowerEvery.
 func (a *Agent) power(now time.Time) power.State {
 	if a.Power == nil {
 		return power.State{Percent: -1}
 	}
-	if a.pwRead.IsZero() || now.Sub(a.pwRead) >= time.Minute || now.Before(a.pwRead) {
+	if a.pwRead.IsZero() || now.Sub(a.pwRead) >= PowerEvery || now.Before(a.pwRead) {
 		a.pw, a.pwRead = a.Power(), now
 	}
 	return a.pw
@@ -269,6 +574,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	pendingQuit := false // Helium quit and its changes are not sent yet
 	quitAt := time.Time{}
 	var lastAttempt time.Time
+	var lastLive time.Time // last bookmarks-only sync while Helium was open
 	backoff := time.Duration(0)
 	first := true
 	timer := time.NewTimer(time.Hour)
@@ -293,8 +599,33 @@ func (a *Agent) Run(ctx context.Context) error {
 		due, reason, note := false, "", ""
 		switch {
 		case open:
-			// Never touch anything while Helium is open.
+			// Helium's files are its own while it runs. Bookmarks are the
+			// one thing that can still sync, because the extension asks the
+			// browser to make the change instead of writing the file.
+			connected := !pluggedOnly && a.LiveConnected != nil && a.LiveConnected()
+			batching := pw.OnBattery && t.LiveBatchBattery > 0
+			a.setWatch(ctx, connected && !batching)
+			if batching && now.Sub(lastLive) < t.LiveBatchBattery && !now.Before(lastLive) {
+				// On battery: changes wait for the next batch. The marks
+				// stay set, so nothing is lost.
+			} else if local, news := a.takeLive(), a.takeNews(); local || (news && connected) {
+				// One sync takes both what changed here and what came.
+				due, reason = true, liveReason
+				if !local {
+					reason = liveNewsReason
+				}
+			} else if every := t.LivePull; every > 0 && connected {
+				if a.isWatching() && t.LivePullWatching > 0 {
+					every = t.LivePullWatching
+				} else if pw.OnBattery {
+					every = or(t.LivePullBattery, every)
+				}
+				if now.Sub(lastLive) >= every+backoff {
+					due, reason = true, liveCheckReason
+				}
+			}
 		case wasOpen:
+			a.setWatch(ctx, false)
 			quitAt, pendingQuit = now, true
 		case pendingQuit && now.Sub(quitAt) >= t.AfterQuit:
 			if pluggedOnly {
@@ -331,9 +662,22 @@ func (a *Agent) Run(ctx context.Context) error {
 		wasOpen, first = open, false
 		if due {
 			lastAttempt = now
+			if isLive(reason) {
+				lastLive = now
+			}
 			if reason == "Helium quit" || reason == "requested" {
 				pendingQuit = false
 			}
+			if reason == liveCheckReason && a.CheckLive != nil {
+				// Nothing new from the other computer: no sync needed. On an
+				// error the full sync runs, and reports it.
+				if changed, err := a.CheckLive(ctx); err == nil && !changed {
+					due = false
+					backoff = 0
+				}
+			}
+		}
+		if due {
 			if err := a.syncOnce(ctx, reason); err != nil {
 				backoff = min(max(2*backoff, time.Minute), t.MaxBackoff)
 			} else {
@@ -371,7 +715,11 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	a.Status.mu.Lock()
 	a.Status.Syncing = true
 	a.Status.mu.Unlock()
-	rep, err := a.Sync(ctx)
+	sync := a.Sync
+	if isLive(reason) && a.SyncLive != nil {
+		sync = a.SyncLive
+	}
+	rep, err := sync(ctx)
 	a.Status.mu.Lock()
 	defer a.Status.mu.Unlock()
 	a.Status.Syncing = false
@@ -381,6 +729,8 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	case errors.Is(err, engine.ErrBusy):
 		a.logf("%s: another sync is running; will try again", reason)
 		return nil
+	case errors.Is(err, engine.ErrHeliumRunning) && isLive(reason):
+		return nil // waits for the sync after Helium quits; nothing to report
 	case errors.Is(err, engine.ErrHeliumRunning):
 		a.logf("%s: Helium opened before the sync started; will retry after it quits", reason)
 		return nil
@@ -394,7 +744,7 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 		return nil
 	}
 	a.Status.LastSync, a.Status.LastReport, a.Status.LastError, a.Status.Paused = a.Now(), rep, "", ""
-	if rep.Sent+rep.Received > 0 || reason != "periodic" {
+	if rep.Sent+rep.Received > 0 || (reason != "periodic" && reason != liveCheckReason) {
 		a.logf("%s: sent %d, received %d, wrote %v, took %s", reason, rep.Sent, rep.Received, rep.Written, tookLine(rep.Took))
 	}
 	return nil

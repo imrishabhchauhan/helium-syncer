@@ -19,6 +19,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/chromejson"
 	"github.com/imrishabhchauhan/helium-syncer/internal/deviceid"
 	"github.com/imrishabhchauhan/helium-syncer/internal/prefhash"
+	"github.com/imrishabhchauhan/helium-syncer/internal/sessions"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
@@ -55,6 +56,8 @@ func main() {
 	case "close":
 		port, _ := strconv.Atoi(os.Args[2])
 		err = closeBrowser(port)
+	case "tabs": // tabs <profile-dir> [live]: the tabs Helium restores next start (read only)
+		err = listTabs(os.Args[2], len(os.Args) > 3 && os.Args[3] == "live")
 	default:
 		err = fmt.Errorf("unknown command %q", os.Args[1])
 	}
@@ -355,5 +358,60 @@ func closeBrowser(port int) error {
 		return err
 	}
 	fmt.Println("closed test instance on port", port)
+	return nil
+}
+
+// listTabs prints the windows and tabs of a profile's newest session file,
+// one tab per line: window, pinned, group, address. It only reads.
+//
+// With live, it reads the newest session file even while Helium is still
+// writing it (no end marker yet): the tabs open right now.
+func listTabs(profile string, live bool) error {
+	var p string
+	var s *sessions.Session
+	if live {
+		names, _ := filepath.Glob(filepath.Join(profile, "Sessions", "Session_*"))
+		sort.Strings(names)
+		if len(names) == 0 {
+			return fmt.Errorf("no session file in %s", profile)
+		}
+		p = names[len(names)-1]
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		cmds, _, err := sessions.ParseCommands(data)
+		if err != nil {
+			return err
+		}
+		s = sessions.Build(cmds)
+	} else {
+		var err error
+		if p, err = sessions.LatestFile(profile); err != nil {
+			return err
+		}
+		if s, err = sessions.ReadFile(p); err != nil {
+			return err
+		}
+	}
+	fmt.Printf("# %s\n", filepath.Base(p))
+	for wi, w := range s.Windows {
+		for _, t := range w.Tabs {
+			cur := t.Current()
+			if cur == nil {
+				continue
+			}
+			pin, group := "", ""
+			if t.Pinned {
+				pin = "pinned"
+			}
+			if t.Group != nil {
+				if g := s.Groups[*t.Group]; g != nil {
+					group = g.Title
+				}
+			}
+			fmt.Printf("w%d type%d\t%s\t%s\t%s\n", wi, w.Type, pin, group, cur.URL)
+		}
+	}
 	return nil
 }

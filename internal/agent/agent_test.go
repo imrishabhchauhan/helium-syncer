@@ -296,3 +296,227 @@ func TestPluggedModeWaitsForPower(t *testing.T) {
 		}
 	}
 }
+
+// While Helium is open and the extension is connected, the agent must keep
+// asking for the other computer's bookmark changes, even when nothing changed
+// here; otherwise a bookmark made on the other computer only appears after
+// this browser happens to change one. Without the extension it stays quiet.
+func TestLiveCheckWhileOpen(t *testing.T) {
+	for _, connected := range []bool{true, false} {
+		f := &fake{open: true}
+		a := newTestAgent(f)
+		a.Timing.LivePull = 40 * time.Millisecond
+		var mu sync.Mutex
+		live := 0
+		a.SyncLive = func(context.Context) (engine.Report, error) {
+			mu.Lock()
+			live++
+			mu.Unlock()
+			return engine.Report{}, nil
+		}
+		a.LiveConnected = func() bool { return connected }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { a.Run(ctx); close(done) }()
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+		<-done
+		mu.Lock()
+		n := live
+		mu.Unlock()
+		f.mu.Lock()
+		full := len(f.syncs)
+		f.mu.Unlock()
+		if full != 0 {
+			t.Fatalf("connected=%v: a full sync ran while Helium was open", connected)
+		}
+		if connected && n < 3 {
+			t.Errorf("connected: %d live check(s) in 300 ms at 40 ms apart, want several", n)
+		}
+		if !connected && n != 0 {
+			t.Errorf("no extension: %d live check(s), want none", n)
+		}
+	}
+}
+
+// The regular live check runs the full sync only when the cheap server check
+// says the other computer sent something, or when that check fails.
+func TestLiveCheckSyncsOnlyWhenTheServerHasNews(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		news    bool
+		err     error
+		wantRun bool
+	}{
+		{"nothing new", false, nil, false},
+		{"news", true, nil, true},
+		{"check failed", false, context.DeadlineExceeded, true},
+	} {
+		f := &fake{open: true}
+		a := newTestAgent(f)
+		a.Timing.LivePull = 40 * time.Millisecond
+		var mu sync.Mutex
+		runs, checks := 0, 0
+		a.SyncLive = func(context.Context) (engine.Report, error) {
+			mu.Lock()
+			runs++
+			mu.Unlock()
+			return engine.Report{}, nil
+		}
+		a.CheckLive = func(context.Context) (bool, error) {
+			mu.Lock()
+			checks++
+			mu.Unlock()
+			return tc.news, tc.err
+		}
+		a.LiveConnected = func() bool { return true }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { a.Run(ctx); close(done) }()
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+		<-done
+		mu.Lock()
+		if checks < 3 {
+			t.Errorf("%s: %d check(s), want several", tc.name, checks)
+		}
+		if got := runs > 0; got != tc.wantRun {
+			t.Errorf("%s: full live sync ran %d time(s), want ran=%v", tc.name, runs, tc.wantRun)
+		}
+		mu.Unlock()
+	}
+}
+
+// With the server saying when there is news, a change from the other
+// computer syncs at once, the regular server checks almost stop (battery),
+// and the connection closes when Helium quits.
+func TestWatchReplacesFrequentChecks(t *testing.T) {
+	f := &fake{open: true}
+	a := newTestAgent(f)
+	a.Timing.LivePull = 20 * time.Millisecond
+	a.Timing.LivePullWatching = time.Hour
+	var mu sync.Mutex
+	runs, checks, watching := 0, 0, 0
+	a.SyncLive = func(context.Context) (engine.Report, error) {
+		mu.Lock()
+		runs++
+		mu.Unlock()
+		return engine.Report{}, nil
+	}
+	a.CheckLive = func(context.Context) (bool, error) {
+		mu.Lock()
+		checks++
+		mu.Unlock()
+		return false, nil
+	}
+	a.LiveConnected = func() bool { return true }
+	newsCh := make(chan struct{})
+	a.Watch = func(ctx context.Context, news func()) error {
+		mu.Lock()
+		watching++
+		mu.Unlock()
+		news() // connected
+		for {
+			select {
+			case <-ctx.Done():
+				mu.Lock()
+				watching--
+				mu.Unlock()
+				return nil
+			case <-newsCh:
+				news()
+			}
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.Run(ctx); close(done) }()
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	r0, c0 := runs, checks
+	mu.Unlock()
+	if r0 < 1 {
+		t.Fatalf("the first news (on connecting) did not sync")
+	}
+	if c0 > 2 {
+		t.Fatalf("%d regular checks in 200 ms while the server is watching; want almost none", c0)
+	}
+	newsCh <- struct{}{}
+	time.Sleep(150 * time.Millisecond)
+	mu.Lock()
+	if runs <= r0 {
+		t.Fatalf("news from the server did not start a sync")
+	}
+	mu.Unlock()
+	f.setOpen(false)
+	time.Sleep(200 * time.Millisecond)
+	mu.Lock()
+	w := watching
+	mu.Unlock()
+	if w != 0 {
+		t.Fatalf("the server connection stayed open after Helium quit")
+	}
+	cancel()
+	<-done
+}
+
+// On battery, changes while Helium is open (made here, or news from the
+// other computer) wait and go in one sync per batch window, and the server
+// connection is not kept; plugged in, each change syncs at once over Watch.
+func TestBatteryBatchesLiveChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pw      power.State
+		maxRuns int
+		minRuns int
+		watch   bool
+	}{
+		{"battery", onBattery, 3, 1, false},
+		{"plugged in", pluggedIn, 1000, 10, true},
+	} {
+		f := &fake{open: true}
+		pb := &powerBox{s: tc.pw}
+		a := batteryAgent(f, pb, BatteryBalanced)
+		a.Timing.LivePull = 10 * time.Millisecond
+		a.Timing.LivePullBattery = time.Hour
+		a.Timing.LivePullWatching = time.Hour
+		a.Timing.LiveBatchBattery = 400 * time.Millisecond
+		a.Timing.PollBattery = 5 * time.Millisecond
+		var mu sync.Mutex
+		runs, watched := 0, 0
+		a.SyncLive = func(context.Context) (engine.Report, error) {
+			mu.Lock()
+			runs++
+			mu.Unlock()
+			return engine.Report{}, nil
+		}
+		a.LiveConnected = func() bool { return true }
+		a.Watch = func(ctx context.Context, news func()) error {
+			mu.Lock()
+			watched++
+			mu.Unlock()
+			<-ctx.Done()
+			return nil
+		}
+		runFor(a, 1000*time.Millisecond, func() {
+			go func() {
+				for i := 0; i < 30; i++ { // a change every 30 ms: browsing
+					if i%2 == 0 {
+						a.markLive()
+					} else {
+						a.markNews()
+					}
+					time.Sleep(30 * time.Millisecond)
+				}
+			}()
+		})
+		mu.Lock()
+		if runs > tc.maxRuns || runs < tc.minRuns {
+			t.Errorf("%s: %d live syncs for 30 changes in 1 s, want %d..%d", tc.name, runs, tc.minRuns, tc.maxRuns)
+		}
+		if (watched > 0) != tc.watch {
+			t.Errorf("%s: server connection opened %d time(s), want open=%v", tc.name, watched, tc.watch)
+		}
+		mu.Unlock()
+	}
+}

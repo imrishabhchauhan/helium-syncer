@@ -126,6 +126,7 @@ First setup:
   - One self-contained binary per OS and architecture (Windows x64/ARM64, macOS universal).
   - No PowerShell, admin rights or other software needed at run time.
 - **Per-item switches** (`engine.Config.Off`): bookmarks, history, tabs, settings, extensions.
+  - History is off on a new computer (10 Nov 2026, owner decision): most of the data and work, little use elsewhere. The setup screen can switch it on.
   - When an item is off, its Helium files are not read or written and local changes are not sent.
   - Incoming ops are still merged into the encrypted state, so switching the item on again loses nothing.
   - Profiles are always on.

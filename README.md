@@ -1,7 +1,7 @@
 # Helium Syncer
 
 **Use the same Helium browser on your Mac and your Windows computer.**
-Your bookmarks, open tabs, tab groups, history, profiles, settings and extensions sync between your computers.
+Your bookmarks, open tabs, tab groups, profiles, settings and extensions sync between your computers. Bookmarks and open tabs also sync while you use Helium.
 
 > [!IMPORTANT]
 > **Helium Syncer is not part of the [Helium](https://helium.computer) browser project.**
@@ -11,7 +11,7 @@ Your bookmarks, open tabs, tab groups, history, profiles, settings and extension
 
 > [!WARNING]
 > **Early version. Do not use it for important data yet.**
-> The tests pass on Windows and macOS, but real-computer tests continue. Watch or star this repository to see when it is ready.
+> It works between a real Mac and a real Windows computer, and the tests pass. But there is no download yet, and when Helium updates, sync stops until a new Helium Syncer version is ready (see [Your data is safe](#your-data-is-safe)). Watch or star this repository to see when it is ready.
 
 ---
 
@@ -20,6 +20,7 @@ Your bookmarks, open tabs, tab groups, history, profiles, settings and extension
 - [How it works](#how-it-works)
 - [See it](#see-it)
 - [What syncs](#what-syncs)
+- [The helper extension](#the-helper-extension)
 - [Set it up](#set-it-up)
 - [Battery and speed](#battery-and-speed)
 - [What you need](#what-you-need)
@@ -59,11 +60,19 @@ sequenceDiagram
     P->>MH: Open Helium: wikipedia.org is there
 ```
 
+**While Helium is open on both computers**, bookmarks and open tabs sync too:
+
+1. On Windows, you open `wikipedia.org` in a new tab.
+2. A few seconds later, the tab opens in Helium on your Mac.
+3. You close the tab on the Mac. It closes on Windows too.
+
+This works through a small [helper extension](#the-helper-extension) that Helium Syncer adds to Helium. Helium Syncer asks Helium to make the change. It does not change Helium's files while Helium is open. On a laptop on battery, these changes wait and travel together, at most every 5 minutes (see [Battery and speed](#battery-and-speed)).
+
 **Three rules that never change:**
 
-- Helium Syncer syncs **only when Helium is closed**. While you use Helium, nothing changes under you.
+- Helium Syncer **never writes Helium's files while Helium is open**. Everything other than bookmarks and open tabs waits until you close Helium.
 - Helium Syncer **never deletes your data**. Profiles from your other computer come next to your profiles.
-- Before each change, Helium Syncer **makes a backup**.
+- Before each change to Helium's files, Helium Syncer **makes a backup**.
 
 On a Mac, "close Helium" means **Command + Q**. A closed window is not enough.
 
@@ -84,9 +93,9 @@ You can switch each item on or off, on each computer.
 
 | Item | What happens |
 |---|---|
-| **Bookmarks** | The bookmarks bar and all folders. A bookmark that you delete on one computer is deleted on the other. |
-| **History** | Pages that you opened in the last 85 days, from all your computers. |
-| **Open tabs** | Open tabs, pinned tabs and tab groups. Helium Syncer puts them together without copies. A tab that you close stays closed. |
+| **Bookmarks** | The bookmarks bar and all folders. A bookmark that you delete on one computer is deleted on the other. Also while Helium is open. |
+| **Open tabs** | Open tabs, pinned tabs, tab groups and Helium pages such as Extensions (not the new tab page). Helium Syncer puts them together without copies. A tab that you close closes on your other computer too. Also while Helium is open. |
+| **History** | **Off on a new computer**, because it is most of the data and of the work. Switch it on in setup or in **Settings** if you want it: pages that you opened in the last 85 days, from all your computers. |
 | **Settings** | Start page, toolbar, theme, fonts, languages and privacy switches. Not the download folder or window sizes. |
 | **Extensions** | Helium Syncer installs your extensions on the other computer, with their settings (for example, your blocker rules). |
 | **Profiles** | Always on. A profile from your other computer is added next to your profiles. If two profiles have the same name, the new one gets a number, for example "Personal (2)", on this computer only. |
@@ -97,6 +106,16 @@ You can switch each item on or off, on each computer.
 |---|---|
 | Passwords | Use a password manager, for example 1Password or Bitwarden. |
 | Site logins (cookies) | Not yet. A later version adds this, only for sites that you select. Google, Microsoft, Apple and bank sites stay locked, because a login that moves can lock your account. |
+
+## The helper extension
+
+Helium keeps your bookmarks and tabs in memory while it is open, so no outside program can change them safely. To sync them while you use Helium, Helium Syncer adds a small extension, **Helium Syncer**, to each synced profile. It does this by itself, after you close Helium. You do not need to install anything.
+
+- **It talks only to Helium Syncer on the same computer** (the address `127.0.0.1`). It never connects to the internet. Helium Syncer locks the data before it sends it to your other computer.
+- **What it can see:** your bookmarks and the addresses of your open tabs. It needs these to sync them. It cannot see passwords, cookies or what you type on pages.
+- **Developer mode.** Helium runs an extension that is not from the Chrome Web Store only when **Developer mode** is on. Helium Syncer switches it on in each synced profile. You can see it on Helium's Extensions page.
+- **Only Helium Syncer can use it.** Helium Syncer accepts a connection only from this extension. A website cannot connect.
+- **The code is open:** [`extension/`](extension).
 
 ## Set it up
 
@@ -121,6 +140,8 @@ You can switch each item on or off, on each computer.
 
 Each step has a **Back** button.
 
+Helium Syncer adds the [helper extension](#the-helper-extension) at its first sync while Helium is closed. If Helium was open, it does this after you next close Helium. From then on, bookmarks and tabs also sync while Helium is open.
+
 After this, Helium Syncer works by itself. It shows an icon next to the clock (Windows) or in the menu bar (Mac):
 
 | Icon | Meaning |
@@ -130,14 +151,24 @@ After this, Helium Syncer works by itself. It shows an icon next to the clock (W
 
 ## Battery and speed
 
-Helium Syncer does very little while it waits. We measured it on Windows 11:
+Helium Syncer does very little while it waits. We measured it:
 
 | | Measured |
 |---|---|
-| Processor time while it waits | **about 1 second in 1 hour** (about 0.03 %) |
-| Memory | **about 21 MB** |
+| Windows 11, Helium closed | **about 1 second of processor time in 1 hour** (about 0.03 %), about 21 MB memory |
+| MacBook Air on battery, Helium open (about 600 bookmarks and 30 tabs) | **about 0.07 seconds of processor time in 5 minutes**, about 94 MB memory |
 
-On a laptop, you select how Helium Syncer uses the battery:
+**While Helium is open** (bookmarks and open tabs):
+
+| | Plugged in (or a desktop) | On battery |
+|---|---|---|
+| A change on your other computer | Arrives in a few seconds. The server tells Helium Syncer, so it does not need to ask again and again. | Waits, and arrives with other changes, at most every 5 minutes. |
+| A change on this computer | Leaves in a few seconds. | Waits, and leaves with other changes, at most every 5 minutes. |
+| Contact with the server | One quiet connection, with a very small signal every 4.5 minutes. | No open connection. One small check every 5 minutes. |
+
+We measured about 7 seconds from a new tab on one computer to the same tab on the other, both plugged in. On battery, changes travel together: for example, 20 tab changes in 5 minutes make one sync, not 20.
+
+**While Helium is closed**, you select how Helium Syncer uses the battery:
 
 | Mode | Plugged in | On battery | Low battery (20 % or less) or battery saver |
 |---|---|---|---|
@@ -168,17 +199,19 @@ If Helium is not installed, the window tells you. It gives you a button to get H
 ## Your data is safe
 
 - **A backup before each change.** If a sync stops in the middle (for example, a power cut), the next start puts everything back.
-- **Never while Helium is open.** Helium Syncer checks again when each sync starts. If Helium is open, it waits.
+- **Never Helium's files while Helium is open.** Helium Syncer checks again before each write. While Helium is open, only bookmarks and tabs change, and only through Helium itself (the [helper extension](#the-helper-extension)).
+- **Safe with tabs.** If Helium is open with no window (on a Mac, after you close the last window), or if Helium is still starting, no tab closes on your other computer. If Helium brings back an older copy of your tabs when it starts, a tab that you closed on the other computer does not come back.
 - **A check before the first sync.** You see what will change. Nothing changes before you agree.
-- **Helium updates.** If your computers have different Helium versions that we did not test together, Helium Syncer stops and tells you to update Helium. It does not guess.
-- **Tested.** 68 groups of automatic tests, with many random cases. Many tests use a real Helium browser on Windows and macOS. We also break the code on purpose to make sure that the tests find the problem.
+- **Helium updates.** Helium Syncer syncs only with Helium versions that we tested. If a computer has a different version, Helium Syncer stops and tells you why. It does not guess. Your changes wait and are not lost. Today this means: **after each Helium update, sync waits until a new Helium Syncer version knows that Helium version.**
+- **Tested.** 128 automatic tests, with many random cases. Many use a real Helium browser on Windows and macOS, also two Helium browsers open at the same time. We also break the code on purpose to make sure that the tests find the problem.
 
 ## Privacy
 
 - **Locked on your computer.** Helium Syncer locks (encrypts) your data before it leaves your computer. The server keeps only locked data. Nobody else can read it. We also cannot.
 - **No account.** There is no email and no password. Your sync code is the only key. The server never gets the code.
 - **Keep your sync code safe.** A person with your code can join your sync. If you lose the code, nobody can get it back for you.
-- **What the server knows:** your computer names, your Helium versions and the size of your locked data.
+- **What the server knows:** your computer names, your Helium versions, the size of your locked data, and when a computer is connected. It does not know what changed.
+- **The helper extension** sends nothing to the internet. It talks only to Helium Syncer on the same computer.
 - **No tracking.** The app sends nothing else. It uses no web fonts and no analytics.
 - **Self-hosting.** You can run the server on your own Cloudflare account.
 - **Open source.** All the code is in this repository, under the MIT license.
@@ -189,10 +222,16 @@ If Helium is not installed, the window tells you. It gives you a button to get H
 On a computer that still syncs, open Helium Syncer. Go to **Settings**. Select **Show** next to **Sync code**.
 
 **Both computers have Helium open. What happens?**
-Nothing changes while Helium is open. When you close Helium on each computer, Helium Syncer puts the tabs from both computers together. It makes no copies.
+Bookmarks and open tabs sync between them through the [helper extension](#the-helper-extension): in a few seconds when plugged in, at most every 5 minutes on battery. Everything else waits until you close Helium.
 
 **I closed a tab on one computer. Does it come back?**
-No. A tab that you close stays closed on all your computers.
+No. A tab that you close closes on all your computers.
+
+**Why is Developer mode on in Helium?**
+Helium runs the [helper extension](#the-helper-extension) only when Developer mode is on, because the extension is not from the Chrome Web Store.
+
+**Why does a page that I did not open appear in a tab?**
+You opened it on your other computer. Open tabs sync between your computers.
 
 **Can I stop syncing on one computer?**
 Yes. Go to **Settings** and select **Leave**. Your Helium data stays on that computer.
@@ -201,7 +240,8 @@ Yes. Go to **Settings** and select **Leave**. Your Helium data stays on that com
 1. In Helium Syncer, go to **Settings** and select **Leave**.
 2. Quit Helium Syncer from its icon menu.
 3. Delete the app.
-4. Optional: delete its folder. Windows: `%APPDATA%\Helium Syncer`. Mac: `~/Library/Application Support/Helium Syncer`.
+4. In Helium, open the Extensions page. Remove **Helium Syncer**. If you use no other extension from outside the Web Store, switch off **Developer mode**.
+5. Optional: delete its folder. Windows: `%APPDATA%\Helium Syncer`. Mac: `~/Library/Application Support/Helium Syncer`.
 
 Your Helium data stays as it is.
 
@@ -245,9 +285,10 @@ irm https://raw.githubusercontent.com/imrishabhchauhan/helium-syncer/main/script
 - [x] **Step 0:** Read and write each Helium data type safely, on test profiles (Windows and macOS).
 - [x] **Step 1:** Sync code, encryption, server, profiles, bookmarks, history, tabs, pinned tabs, tab groups, settings, extensions.
 - [x] **Step 2:** Setup window, tray and menu-bar app, battery modes, on/off switch for each item.
-- [ ] **Step 3:** Real tests between a Mac and a Windows computer. *(now)*
+- [x] **Step 3:** Real tests between a Mac and a Windows computer.
+- [x] **Step 3b:** Bookmarks and open tabs sync while Helium is open (helper extension), with battery care on laptops.
 - [ ] **Step 4:** Site logins, only for sites that you select.
-- [ ] **Step 5:** Signed installers, automatic updates and a self-hosting guide.
+- [ ] **Step 5:** Downloads, signed installers, automatic updates, quicker support for new Helium versions, and a self-hosting guide. *(next; plan in [docs/03-release-plan.md](docs/03-release-plan.md))*
 
 The full design is in [docs/01-spec.md](docs/01-spec.md).
 

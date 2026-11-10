@@ -53,11 +53,65 @@ type Config struct {
 	// Running reports whether Helium is open; default helium.IsRunning.
 	// Tests replace it to open Helium in the middle of a sync.
 	Running func(userData string) (bool, error)
+	// Live, when set, syncs bookmarks through the browser itself instead of
+	// its files, so they can sync while Helium is open. A file-based tool
+	// cannot change a running Chromium: it keeps bookmarks in memory and
+	// rewrites the file when it quits, throwing the change away. The
+	// companion extension reads and writes them through Helium's own API.
+	// Nil, or a profile the extension is not connected for, falls back to
+	// the Bookmarks file exactly as before.
+	Live LiveBookmarks
+	// LiveTabs does the same for open tabs: they sync through the browser
+	// while it runs. Nil, or a profile whose extension does not report tabs,
+	// leaves tabs to the session files, which change only while Helium is
+	// closed.
+	LiveTabs LiveTabs
+	// WhileOpen is a sync while Helium is running. It changes no file in
+	// Helium's folder: Helium keeps its data in memory and would overwrite
+	// the change, and the next sync would then read the overwrite as the
+	// person undoing it. Only the bookmarks and open tabs of profiles whose
+	// browser is connected through Live and LiveTabs sync, through the
+	// browser itself. Everything else that arrives, including changes for a
+	// profile whose browser is not connected yet and changes to the profile
+	// list, is kept and applied by the next sync after Helium quits.
+	WhileOpen bool
+}
+
+// LiveTabs is the companion extension's view of open tabs, one profile
+// directory at a time.
+type LiveTabs interface {
+	// ReadTabs returns the open windows and tabs as a session. fresh is set
+	// until a merge used the first report of a browser that just started
+	// (see merge.SyncTabs). ok is false when the extension is not connected
+	// or does not report tabs.
+	ReadTabs(profileDir string) (s *sessions.Session, fresh, ok bool)
+	// WriteTabs asks the browser to make its tabs match s, the merged
+	// session built from the last ReadTabs.
+	WriteTabs(profileDir string, s *sessions.Session) error
+}
+
+// LiveBookmarks is the companion extension, seen from the engine. One
+// profile directory at a time, the same path the Bookmarks file sits in.
+type LiveBookmarks interface {
+	// ReadBookmarks returns the tree the open browser holds right now.
+	// ok is false when no extension is connected for this profile, and the
+	// caller then reads the file instead.
+	ReadBookmarks(profileDir string) (f *bookmarks.File, ok bool)
+	// WriteBookmarks asks the browser to make its tree match f.
+	WriteBookmarks(profileDir string, f *bookmarks.File) error
+	// RestoreKeys is called on a Bookmarks file read after Helium quit. It
+	// puts back the sync guid of each bookmark made in the open browser,
+	// where Helium wrote its own, so the file does not read as that bookmark
+	// deleted and a new one made.
+	RestoreKeys(profileDir string, f *bookmarks.File) int
 }
 
 // closed is checked right before each write into Helium's folder: if a
 // person opens Helium during a sync, the sync stops and is rolled back.
 func closed(cfg Config) error {
+	if cfg.WhileOpen {
+		return nil // Helium is open on purpose; nothing below writes its files
+	}
 	is := cfg.Running
 	if is == nil {
 		is = helium.IsRunning
@@ -103,6 +157,8 @@ type Report struct {
 	// Took is how long each step took, in milliseconds, e.g. "pull": 120.
 	// Steps inside profiles add up over all profiles.
 	Took map[string]int64 `json:",omitempty"`
+	// Cursor is where this run left the server's change list, for Peek.
+	Cursor string `json:"-"`
 }
 
 // step measures one step of a run into rep.Took: defer rep.step("pull")().
@@ -125,6 +181,11 @@ func stepIn(ctx context.Context, name string) func() {
 	}
 	return func() {}
 }
+
+// GateReuse is how long a passed version check holds for syncs while Helium
+// is open. Helium cannot update itself while it runs, so this computer's
+// version is fixed meanwhile; the other computer's is checked again after.
+const GateReuse = 30 * time.Minute
 
 // ErrHeliumRunning: the folder is in use; try again after Helium quits.
 var ErrHeliumRunning = errors.New("Helium is open on this profile folder; sync runs when it is closed")
@@ -154,9 +215,20 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 
+	if cfg.WhileOpen {
+		// Only what the browser can change itself syncs while it is open.
+		off := map[string]bool{}
+		for _, k := range Kinds {
+			off[k] = (k != KindBookmarks && k != KindTabs) || cfg.Off[k]
+		}
+		cfg.Off = off
+	}
+
 	// 1. Finish or undo an interrupted previous run.
 	if j, err := readJournal(cfg.StateDir); err != nil {
 		return rep, err
+	} else if j != nil && cfg.WhileOpen {
+		return rep, ErrHeliumRunning // recovery writes files: after Helium quits
 	} else if j != nil {
 		if err := restore(cfg.UserData, *j); err != nil {
 			return rep, fmt.Errorf("engine: recovering from an interrupted sync: %w", err)
@@ -187,18 +259,28 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		wg       sync.WaitGroup
 	)
 	done = rep.step("server")
-	wg.Add(3)
-	go func() { defer wg.Done(); peers, vErr = cfg.Transport.Versions(ctx, cfg.DeviceID) }()
-	// This computer's name and Helium version, for the other computers (also
-	// when the gate pauses: they then see which version this one has).
-	go func() { defer wg.Done(); cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version) }()
+	// A sync while Helium is open runs on every bookmark or tab change: it
+	// reuses a version check that passed a short while ago with the same
+	// Helium version, so it is one request, not three (battery, and speed).
+	gateFresh := cfg.WhileOpen && st.GateVersion == version &&
+		cfg.Now().Sub(time.UnixMilli(st.GateChecked)) < GateReuse && !cfg.Now().Before(time.UnixMilli(st.GateChecked))
+	if !gateFresh {
+		wg.Add(2)
+		go func() { defer wg.Done(); peers, vErr = cfg.Transport.Versions(ctx, cfg.DeviceID) }()
+		// This computer's name and Helium version, for the other computers
+		// (also when the gate pauses: they then see which version this one has).
+		go func() { defer wg.Done(); cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version) }()
+	}
+	wg.Add(1)
 	go func() { defer wg.Done(); incoming, next, pErr = cfg.Transport.Pull(ctx, st.Cursor) }()
 	wg.Wait()
 	done()
 	if vErr != nil {
 		return rep, vErr
 	}
-	if err := helium.CheckVersions(version, peers); err != nil {
+	if gateFresh {
+		// passed recently; nothing to check
+	} else if err := helium.CheckVersions(version, peers); err != nil {
 		var ge *helium.GateError
 		if errors.As(err, &ge) {
 			rep.Paused = ge.Message
@@ -208,6 +290,9 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	}
 	if pErr != nil {
 		return rep, pErr
+	}
+	if !gateFresh {
+		st.GateChecked, st.GateVersion = cfg.Now().UnixMilli(), version
 	}
 	clock := crdt.NewClock(cfg.DeviceID, func() int64 { return cfg.Now().UnixMilli() })
 	clock.Restore(st.Clock)
@@ -240,20 +325,32 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		dirs = append(dirs, d)
 	}
 	sort.Strings(dirs)
-	done = rep.step("backup")
-	bk, err := backup(cfg.StateDir, cfg.UserData, dirs, cfg.Now())
-	done()
-	if err != nil {
-		return rep, fmt.Errorf("engine: backup failed, nothing was changed: %w", err)
-	}
-	j := journal{Backup: bk}
-	if err := writeJournal(cfg.StateDir, j); err != nil {
-		return rep, err
+	// While Helium is open nothing in its folder changes, so there is
+	// nothing to back up (and on Windows its open files cannot be read).
+	var j journal
+	if !cfg.WhileOpen {
+		done = rep.step("backup")
+		bk, err := backup(cfg.StateDir, cfg.UserData, dirs, cfg.Now())
+		done()
+		if err != nil {
+			return rep, fmt.Errorf("engine: backup failed, nothing was changed: %w", err)
+		}
+		j.Backup = bk
+		if err := writeJournal(cfg.StateDir, j); err != nil {
+			return rep, err
+		}
 	}
 
 	done = rep.step("apply")
 	out, added, err := apply(ctx, cfg, st, clock, incoming, &j)
 	done()
+	if err == nil && cfg.WhileOpen && len(j.Written)+len(j.Created) > 0 {
+		// Never expected; refuse rather than save a state that assumes it.
+		err = fmt.Errorf("engine: a sync while Helium was open tried to change %v %v", j.Written, j.Created)
+	}
+	if err != nil && cfg.WhileOpen {
+		return rep, err // nothing was written, so nothing to put back
+	}
 	if err != nil {
 		// Put everything back exactly as it was.
 		if rerr := restore(cfg.UserData, j); rerr != nil {
@@ -293,6 +390,11 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 			}
 		}
 	}
+	if len(st.Outbox) == 0 {
+		// Peek may go on from here. With changes still waiting to be sent
+		// it must not: the next check then owes a full run that retries.
+		rep.Cursor = st.Cursor
+	}
 	pruneBackups(cfg.StateDir, 20, 30*24*time.Hour, cfg.Now())
 	return rep, nil
 }
@@ -330,6 +432,34 @@ func apply(ctx context.Context, cfg Config, st *State, clock *crdt.Clock, incomi
 		perProfile[pid] = append(perProfile[pid], op)
 	}
 	var out []crdt.Op
+
+	if cfg.WhileOpen {
+		// Changes to the profile list write Local State and may create a
+		// folder: keep them for the sync after Helium quits. A change inside
+		// a profile this computer does not have yet cannot be kept without
+		// that profile, so leave everything on the server until then.
+		for pid := range perProfile {
+			if !linked(st.Links, pid) {
+				return nil, nil, ErrHeliumRunning
+			}
+		}
+		keep(clock, profileOps, func(crdt.Op) *crdt.Map { return st.ProfilesMap })
+		var out []crdt.Op
+		var dirs []string
+		for d := range st.Links {
+			dirs = append(dirs, d)
+		}
+		sort.Strings(dirs)
+		for _, dir := range dirs {
+			pid := st.Links[dir]
+			ops, err := syncProfile(ctx, cfg, st.profile(pid), filepath.Join(cfg.UserData, dir), clock, perProfile[pid], j)
+			if err != nil {
+				return nil, nil, fmt.Errorf("profile %q: %w", dir, err)
+			}
+			out = append(out, scope(ops, pid)...)
+		}
+		return out, nil, nil
+	}
 
 	// Profiles first: new ones are created next to the local ones.
 	before := map[string]bool{}
@@ -482,24 +612,44 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	// Bookmarks.
 	done := stepIn(ctx, "bookmarks")
 	defer func() { done() }()
-	if cfg.Off[KindBookmarks] {
+	var bf *bookmarks.File
+	live := false
+	if cfg.Live != nil && !cfg.Off[KindBookmarks] {
+		bf, live = cfg.Live.ReadBookmarks(dir)
+	}
+	if cfg.Off[KindBookmarks] || (cfg.WhileOpen && !live) {
+		// Off, or Helium is open and this profile's browser is not
+		// connected: its file must not be touched, so keep what arrived.
 		keep(clock, byType[merge.TypeBookmark], func(crdt.Op) *crdt.Map { return ps.Bookmarks })
 	} else {
 		bmPath := filepath.Join(dir, "Bookmarks")
-		raw, err := os.ReadFile(bmPath)
-		if errors.Is(err, fs.ErrNotExist) {
-			raw = []byte(emptyBookmarks)
-		} else if err != nil {
-			return nil, err
-		}
-		bf, err := bookmarks.Parse(raw)
-		if err != nil {
-			return nil, err
+		var raw []byte
+		if !live {
+			var err error
+			raw, err = os.ReadFile(bmPath)
+			if errors.Is(err, fs.ErrNotExist) {
+				raw = []byte(emptyBookmarks)
+			} else if err != nil {
+				return nil, err
+			}
+			bf, err = bookmarks.Parse(raw)
+			if err != nil {
+				return nil, err
+			}
+			if cfg.Live != nil {
+				cfg.Live.RestoreKeys(dir, bf)
+			}
 		}
 		bf, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])
 		ps.BookmarksBase = bmBase
 		out = append(out, ops...)
-		if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
+		if live {
+			// The browser owns the file while it is open, so hand the merged
+			// tree to the extension and never touch the file ourselves.
+			if err := cfg.Live.WriteBookmarks(dir, bf); err != nil {
+				return nil, err
+			}
+		} else if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
 			if err := noteCreate(cfg, j, bmPath); err != nil {
 				return nil, err
 			}
@@ -536,8 +686,15 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	done()
 	done = stepIn(ctx, "history")
 	histOps := append(byType[merge.TypeVisit], byType[merge.TypeTitle]...)
-	if hp := filepath.Join(dir, "History"); exists(hp) && !cfg.Off[KindHistory] {
+	hp := filepath.Join(dir, "History")
+	seen := fileStamp(hp)
+	if seen != "" && seen == ps.HistorySeen && len(histOps) == 0 && !cfg.Off[KindHistory] {
+		// Helium has not run since the last history sync, and nothing came.
+	} else if exists(hp) && !cfg.Off[KindHistory] {
 		if err := closed(cfg); err != nil {
+			return nil, err
+		}
+		if err := ps.loadHistory(cfg.StateDir); err != nil {
 			return nil, err
 		}
 		db, err := history.Open(hp)
@@ -552,7 +709,17 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		}
 		ps.HistoryBase = hb
 		out = append(out, ops...)
-	} else {
+		if len(ops)+len(histOps) > 0 {
+			ps.changedHistory()
+		}
+		ps.HistorySeen = fileStamp(hp)
+	} else if len(histOps) > 0 {
+		// Kept for when this profile's history is synced. Only now is the
+		// history state read at all.
+		if err := ps.loadHistory(cfg.StateDir); err != nil {
+			return nil, err
+		}
+		ps.changedHistory()
 		for _, op := range histOps {
 			clock.Observe(op.Stamp)
 			if op.Type == merge.TypeVisit {
@@ -567,7 +734,15 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	done()
 	done = stepIn(ctx, "tabs")
 	tabOps := append(byType[merge.TypeTab], byType[merge.TypeGroup]...)
-	if cfg.Off[KindTabs] {
+	var local *sessions.Session
+	liveTabs, fresh := false, false
+	if cfg.LiveTabs != nil && !cfg.Off[KindTabs] {
+		local, fresh, liveTabs = cfg.LiveTabs.ReadTabs(dir)
+	}
+	if cfg.Off[KindTabs] || (cfg.WhileOpen && !liveTabs) {
+		// Off, or Helium is open and this profile's browser does not report
+		// its tabs: the session files must not be touched, so keep what
+		// arrived for the sync after Helium quits.
 		keep(clock, tabOps, func(op crdt.Op) *crdt.Map {
 			if op.Type == merge.TypeGroup {
 				return ps.GroupMap
@@ -576,26 +751,43 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		})
 		return out, nil
 	}
-	local := &sessions.Session{Groups: map[[2]uint64]*sessions.Group{}}
-	if latest, err := sessions.LatestFile(dir); err == nil {
-		if s, err := sessions.ReadFile(latest); err == nil {
-			local = s
-		} else if errors.Is(err, sessions.ErrEncrypted) {
-			return nil, err // never overwrite a session we cannot read
+	if !liveTabs {
+		local = &sessions.Session{Groups: map[[2]uint64]*sessions.Group{}}
+		if latest, err := sessions.LatestFile(dir); err == nil {
+			if s, err := sessions.ReadFile(latest); err == nil {
+				local = s
+			} else if errors.Is(err, sessions.ErrEncrypted) {
+				return nil, err // never overwrite a session we cannot read
+			}
 		}
 	}
+	// A tab opened for another computer's page gets that page's title from
+	// synced history, in the session file only: a live browser loads the
+	// page and shows its own title, so history is not read for it.
 	titleOf := func(u string) string {
+		if liveTabs || ps.loadHistory(cfg.StateDir) != nil {
+			return ""
+		}
 		var t string
 		if v, ok := ps.Titles.Get(u); ok {
 			json.Unmarshal(v, &t)
 		}
 		return t
 	}
-	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf)
+	projected, ops := merge.SyncTabs(local, ps.Tabs, ps.TabMap, ps.GroupMap, clock, tabOps, titleOf, fresh)
 	out = append(out, ops...)
-	// Only rewrite the session when tabs arrived from another device; this
-	// device's own changes are already in Helium's file.
-	if len(tabOps) > 0 {
+	if liveTabs {
+		// The browser owns its tabs while it runs: ask it to make the change.
+		if err := cfg.LiveTabs.WriteTabs(dir, projected); err != nil {
+			return nil, err
+		}
+		return out, nil
+	}
+	// Only rewrite the session when tabs arrived from another device, or
+	// when Helium quit with no tab open, so the synced tabs are there at the
+	// next start (see merge.SyncTabs); this device's own changes are already
+	// in Helium's file.
+	if len(tabOps) > 0 || ps.Tabs.Empty {
 		if err := closed(cfg); err != nil {
 			return nil, err
 		}
@@ -612,6 +804,15 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	return out, nil
 }
 
+// fileStamp is a file's size and change time, or "" when it is missing.
+func fileStamp(path string) string {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d@%d", info.Size(), info.ModTime().UnixNano())
+}
+
 // countTypes counts ops per data type (without the profile scope).
 func countTypes(ops []crdt.Op) map[string]int {
 	m := map[string]int{}
@@ -624,4 +825,14 @@ func addTypes(m map[string]int, ops []crdt.Op) {
 		_, t := splitScope(op.Type)
 		m[t]++
 	}
+}
+
+// linked reports whether this computer has a folder for the profile id.
+func linked(links merge.ProfileLinks, pid string) bool {
+	for _, id := range links {
+		if id == pid {
+			return true
+		}
+	}
+	return false
 }

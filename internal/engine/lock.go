@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -30,11 +32,30 @@ func lockState(stateDir string) (func(), error) {
 			return nil, err
 		}
 		info, serr := os.Stat(p)
-		if serr == nil && time.Since(info.ModTime()) > staleLock {
-			os.Remove(p) // left over from a crash
+		if serr == nil && (time.Since(info.ModTime()) > staleLock || ownerGone(p)) {
+			os.Remove(p) // left over from a crash or a stopped program
 			continue
 		}
 		return nil, ErrBusy
 	}
 	return nil, ErrBusy
+}
+
+// ownerGone reports whether the program that wrote the lock has ended. A
+// program that is stopped or crashes leaves its lock behind, and without this
+// every sync would wait the full staleLock time. When unsure it says no.
+func ownerGone(lockPath string) bool {
+	b, err := os.ReadFile(lockPath)
+	if err != nil {
+		return false
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) == 0 {
+		return false
+	}
+	pid, err := strconv.Atoi(fields[0])
+	if err != nil || pid <= 0 || pid == os.Getpid() {
+		return false
+	}
+	return !processAlive(pid)
 }

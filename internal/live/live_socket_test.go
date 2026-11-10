@@ -1,0 +1,364 @@
+package live
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
+)
+
+// A real profile has hundreds of bookmarks, so the tree the extension sends
+// is far bigger than a WebSocket library's default message limit (32 KB for
+// coder/websocket). If the server keeps that default it cuts the connection
+// on the first tree, the extension reconnects, and live sync never starts.
+// This was seen on a real Helium with 504 bookmarks (about 75 KB).
+func TestALargeTreeIsAccepted(t *testing.T) {
+	const links = 1500 // comfortably past 32 KB, like a big real profile
+
+	var file strings.Builder
+	file.WriteString(`{"checksum":"","roots":{"bookmark_bar":{"children":[`)
+	nodes := []Node{{ID: "1", Title: "Bookmarks bar", Folder: true, FolderType: "bookmarks-bar"}}
+	for i := 0; i < links; i++ {
+		id := fmt.Sprint(100 + i)
+		url := fmt.Sprintf("https://example.com/a-fairly-long-path/for-bookmark-number-%d", i)
+		title := fmt.Sprintf("A bookmark with a realistic title, number %d", i)
+		if i > 0 {
+			file.WriteString(",")
+		}
+		fmt.Fprintf(&file, `{"date_added":"13300000000000000","guid":"aaaaaaaa-0000-4000-8000-%012d","id":"%s","name":"%s","type":"url","url":"%s"}`, i, id, title, url)
+		nodes = append(nodes, Node{ID: id, ParentID: "1", Index: i, Title: title, URL: url})
+	}
+	file.WriteString(`],"date_added":"0","date_modified":"0","guid":"0bc5d13f-2cba-5d74-951f-3f233fe6c908","id":"1","name":"Bookmarks bar","type":"folder"},`)
+	file.WriteString(`"other":{"children":[],"date_added":"0","date_modified":"0","guid":"82b081ec-3dd3-529c-8475-ab6c344590dd","id":"2","name":"Other bookmarks","type":"folder"},`)
+	file.WriteString(`"synced":{"children":[],"date_added":"0","date_modified":"0","guid":"4cf2e351-0e85-532b-bb37-df045d8f8d0f","id":"3","name":"Mobile bookmarks","type":"folder"}},"version":1}`)
+
+	userData, dir := profileWithFile(t, file.String())
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	if err := wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version}); err != nil {
+		t.Fatal(err)
+	}
+	tree := Msg{Type: "tree", Version: Version, Nodes: nodes}
+	if err := wsjson.Write(ctx, ws, tree); err != nil {
+		t.Fatal(err)
+	}
+
+	for !s.Connected(dir) {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("a %d-bookmark tree never registered the browser; the server dropped it", links)
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+// The browser reports dates in milliseconds, the file keeps microseconds.
+// Reading through the browser must give back the file's exact value, or every
+// bookmark looks edited each time sync switches between the two (seen on a
+// real Windows PC: 357 bookmarks "changed" on the first live sync).
+func TestDatesKeepTheFilesPrecision(t *testing.T) {
+	body := strings.Replace(fileJSON, `"date_added":"13300000000000000","guid":"aaaaaaaa-0000-4000-8000-000000000001"`,
+		`"date_added":"13300000000000123","guid":"aaaaaaaa-0000-4000-8000-000000000001"`, 1)
+	userData, dir := profileWithFile(t, body)
+	s := New(userData)
+	nodes := browserNodes()
+	const epochMs = 11644473600000
+	nodes[2].DateAdded = 13300000000000123/1000 - epochMs     // what Chromium reports for SVGL
+	nodes[4].DateAdded = 13300000000000000/1000 - epochMs + 5 // Kenney: really a different moment
+	connect(s, dir, nodes)
+	f, ok := s.ReadBookmarks(dir)
+	if !ok {
+		t.Fatal("not connected")
+	}
+	got := map[string]string{}
+	walkFile(f, func(n map[string]any, _, _ string) { got[str(n["name"])] = str(n["date_added"]) })
+	if got["SVGL"] != "13300000000000123" {
+		t.Errorf("SVGL date_added %s, want the file's exact 13300000000000123", got["SVGL"])
+	}
+	if got["Kenney"] != "13300000000005000" {
+		t.Errorf("Kenney date_added %s, want the browser's 13300000000005000 (a real change)", got["Kenney"])
+	}
+}
+
+// After the app sends a tree, the extension applies it and reports its tree
+// back. If an unchanged report counted as a change, or the app sent a tree
+// the browser already has, the two would start each other for ever (seen on
+// the Mac: a sync every second).
+func TestNoEndlessLoopBetweenAppAndBrowser(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	changed := make(chan string, 10)
+	s.Changed = func(p string) { changed <- p }
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+	var hello Msg
+	wsjson.Read(ctx, ws, &hello)
+
+	send := func(nodes []Node) { wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: nodes}) }
+	got := func() int {
+		time.Sleep(150 * time.Millisecond)
+		return len(changed)
+	}
+	send(browserNodes())
+	if n := got(); n != 1 {
+		t.Fatalf("first tree: %d change(s), want 1", n)
+	}
+	<-changed
+	send(browserNodes()) // the same tree again, as after an apply
+	if n := got(); n != 0 {
+		t.Fatalf("an unchanged tree counted as %d change(s)", n)
+	}
+	moved := browserNodes()
+	moved[2].Title = "SVGL renamed"
+	send(moved)
+	if n := got(); n != 1 {
+		t.Fatalf("a renamed bookmark: %d change(s), want 1", n)
+	}
+	<-changed
+
+	// The app writes back what the browser already has: nothing is sent.
+	f, ok := s.ReadBookmarks(dir)
+	if !ok {
+		t.Fatal("not connected")
+	}
+	if err := s.WriteBookmarks(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	rctx, rcancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer rcancel()
+	var m Msg
+	if err := wsjson.Read(rctx, ws, &m); err == nil {
+		t.Fatalf("the app sent %q for a tree the browser already has", m.Type)
+	}
+}
+
+// What the app learned from the Bookmarks file must be learned again when a
+// browser connects anew: the file may have been rewritten while Helium was
+// closed. Seen on the Mac: stale dates were sent again on every start.
+func TestANewConnectionLearnsTheFileAgain(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	const epochMs = 11644473600000
+	nodes := browserNodes()
+	nodes[2].DateAdded = 13300000000000000/1000 - epochMs
+
+	connectOnce := func() string {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+			HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ws.Close(websocket.StatusNormalClosure, "")
+		wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+		var hello Msg
+		wsjson.Read(ctx, ws, &hello)
+		wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: nodes})
+		for !s.Connected(dir) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		f, _ := s.ReadBookmarks(dir)
+		date := ""
+		walkFile(f, func(n map[string]any, _, _ string) {
+			if str(n["name"]) == "SVGL" {
+				date = str(n["date_added"])
+			}
+		})
+		return date
+	}
+	if got := connectOnce(); got != "13300000000000000" {
+		t.Fatalf("first connection: %s", got)
+	}
+	// Helium closes, a sync rewrites the file with the exact time, Helium
+	// starts again and connects.
+	os.WriteFile(filepath.Join(dir, "Bookmarks"), []byte(strings.Replace(fileJSON,
+		`"date_added":"13300000000000000","guid":"aaaaaaaa-0000-4000-8000-000000000001"`,
+		`"date_added":"13300000000000456","guid":"aaaaaaaa-0000-4000-8000-000000000001"`, 1)), 0o600)
+	for s.Connected(dir) {
+		time.Sleep(10 * time.Millisecond) // the first browser has gone
+	}
+	if got := connectOnce(); got != "13300000000000456" {
+		t.Errorf("after reconnecting, date_added %s: the old file was still used", got)
+	}
+}
+
+// A bookmark from the other computer is made by the extension, and Helium
+// gives it a new id. The app must learn that id is the bookmark it sent, or it
+// reads it back as a new bookmark (and the sent one as deleted), sends both,
+// and the other computer does the same in turn. Seen on the real Windows PC:
+// "sent 2" right after receiving 1.
+func receivedBookmark(t *testing.T, oldExtension bool) {
+	userData, dir := profileWithFile(t, fileJSON)
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	s.KeysFile = filepath.Join(t.TempDir(), "live-keys.json")
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+	var hello Msg
+	wsjson.Read(ctx, ws, &hello)
+	wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: browserNodes()})
+	for !s.Connected(dir) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The merged tree has one bookmark from the Mac.
+	const fromMac = "dddddddd-0000-4000-8000-00000000000a"
+	merged := mustParse(t, strings.Replace(fileJSON,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
+			`{"date_added":"13300000000000000","guid":"`+fromMac+`","id":"0","name":"From the Mac","type":"url","url":"https://mac.example/"}`, 1))
+	if err := s.WriteBookmarks(dir, merged); err != nil {
+		t.Fatal(err)
+	}
+	var apply Msg
+	if err := wsjson.Read(ctx, ws, &apply); err != nil || apply.Type != "apply" {
+		t.Fatalf("no apply: %v %v", apply.Type, err)
+	}
+	placeholder := ""
+	for _, n := range apply.Nodes {
+		if n.Title == "From the Mac" {
+			placeholder = n.ID
+		}
+	}
+	if placeholder != "new:"+fromMac {
+		t.Fatalf("the new bookmark went out as %q", placeholder)
+	}
+
+	// The extension makes it; Helium calls it 500.
+	// Helium stamps its own creation time on it, which the API cannot change.
+	made := append(browserNodes(), Node{ID: "500", ParentID: "1", Index: 1, Title: "From the Mac", URL: "https://mac.example/", DateAdded: 1794310000123})
+	if !oldExtension {
+		wsjson.Write(ctx, ws, Msg{Type: "created", Version: Version, Created: map[string]string{placeholder: "500"}})
+	}
+	wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: made})
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		s.mu.Lock()
+		n := len(s.conns[dir].nodes)
+		s.mu.Unlock()
+		if n == len(made) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	f, _ := s.ReadBookmarks(dir)
+	if got := guidsByTitle(f)["From the Mac"]; got != fromMac {
+		t.Fatalf("while open, the received bookmark reads as guid %s, want %s", got, fromMac)
+	}
+	var date string
+	walkFile(f, func(n map[string]any, _, _ string) {
+		if str(n["name"]) == "From the Mac" {
+			date = str(n["date_added"])
+		}
+	})
+	if date != "13300000000000000" {
+		t.Errorf("while open, the received bookmark reads date %s, want the synced 13300000000000000", date)
+	}
+
+	// Helium quits and writes its own random guid for id 500.
+	quit := mustParse(t, strings.Replace(fileJSON,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
+			`{"date_added":"13438783600123000","guid":"eeeeeeee-0000-4000-8000-0000000000ee","id":"500","name":"From the Mac","type":"url","url":"https://mac.example/"}`, 1))
+	if n := s.RestoreKeys(dir, quit); n != 1 {
+		t.Fatalf("RestoreKeys put back %d, want 1", n)
+	}
+	if got := guidsByTitle(quit)["From the Mac"]; got != fromMac {
+		t.Errorf("after quit the received bookmark has guid %s, want %s", got, fromMac)
+	}
+	walkFile(quit, func(n map[string]any, _, _ string) {
+		if str(n["name"]) == "From the Mac" && str(n["date_added"]) != "13300000000000000" {
+			t.Errorf("after quit the received bookmark has date %s, want the synced 13300000000000000", str(n["date_added"]))
+		}
+	})
+}
+
+func TestAReceivedBookmarkKeepsItsKey(t *testing.T) { receivedBookmark(t, false) }
+
+// An extension older than the "created" answer: the app must still know the
+// bookmark it asked for when it appears.
+func TestAReceivedBookmarkKeepsItsKeyWithAnOlderExtension(t *testing.T) { receivedBookmark(t, true) }
+
+// A remembered bookmark without a synced date yet (made by an older app)
+// must take the synced date as soon as the app writes the tree, even when
+// nothing else differs and nothing is sent.
+func TestSyncedDateIsTakenWhenNothingElseChanges(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	s := New(userData)
+	nodes := append(browserNodes(), Node{ID: "500", ParentID: "1", Index: 2, Title: "From the Mac", URL: "https://mac.example/", DateAdded: 1794310000123})
+	connect(s, dir, nodes)
+	const key = "dddddddd-0000-4000-8000-00000000000a"
+	s.mu.Lock()
+	s.remember(dir, "500", bookmarkKey{GUID: key, URL: "https://mac.example/", Title: "From the Mac"})
+	s.mu.Unlock()
+	f, _ := s.ReadBookmarks(dir) // reads the browser's own date
+	// The sync holds an older date for it.
+	walkFile(f, func(n map[string]any, _, guid string) {
+		if guid == key {
+			n["date_added"] = "13300000000000000"
+		}
+	})
+	s.mu.Lock()
+	c := s.conns[dir]
+	c.ws = nil // nothing may be sent: the shape is the same
+	s.mu.Unlock()
+	if err := s.WriteBookmarks(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.ReadBookmarks(dir)
+	walkFile(again, func(n map[string]any, _, guid string) {
+		if guid == key && str(n["date_added"]) != "13300000000000000" {
+			t.Errorf("date %s, want the synced 13300000000000000", str(n["date_added"]))
+		}
+	})
+}
