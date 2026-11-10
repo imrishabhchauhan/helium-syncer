@@ -224,6 +224,15 @@ chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === WAKE_ALARM) connect();
 });
 
+// The alarm alone is not enough: on a Mac on battery the system can hold it
+// back for minutes, and a worker that was stopped while the app was away
+// then never comes back (seen on the real Mac). Switching tabs or windows
+// wakes this worker too, so the link is back the moment Helium is used.
+// Neither event needs a permission, and connect() does nothing when the
+// link is already open.
+chrome.tabs.onActivated.addListener(connect);
+chrome.windows.onFocusChanged.addListener(connect);
+
 chrome.runtime.onStartup.addListener(connect);
 chrome.runtime.onInstalled.addListener(connect);
 connect();
