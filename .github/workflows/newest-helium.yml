@@ -7,6 +7,11 @@ name: Newest Helium
 
 on:
   workflow_dispatch:
+    inputs:
+      helium_tag:
+        description: "Helium version to test, e.g. 0.19.4.1 (empty: the newest)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -37,7 +42,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/helium" && cd "$RUNNER_TEMP/helium"
-          tag=$(gh release view -R "${{ matrix.repo }}" --json tagName -q .tagName)
+          tag="${{ inputs.helium_tag }}"
+          if [ -z "$tag" ]; then tag=$(gh release view -R "${{ matrix.repo }}" --json tagName -q .tagName); fi
           gh release download "$tag" -R "${{ matrix.repo }}" -p "${{ matrix.asset }}"
           if [ "$RUNNER_OS" = "Windows" ]; then
             unzip -q ./*.zip
