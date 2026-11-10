@@ -68,4 +68,4 @@ jobs:
         working-directory: server
         run: npx tsc --noEmit
       - name: Server tests (local Cloudflare runtime)
-        run: go test -tags server ./internal/cloud/
+        run: go test -v -tags server ./internal/cloud/
