@@ -123,13 +123,11 @@ func (in *Instance) Close(ctx context.Context) error {
 	if in.probe != nil {
 		in.probe.Close()
 	}
-	if !quitLikeTheSystem(in.cmd) {
-		ws, err := cdp.BrowserWSURL(ctx, in.Port)
-		if err == nil {
-			if c, err := cdp.Dial(ctx, ws); err == nil {
-				c.Call(ctx, "Browser.close", map[string]any{})
-				c.Close()
-			}
+	ws, err := cdp.BrowserWSURL(ctx, in.Port)
+	if err == nil {
+		if c, err := cdp.Dial(ctx, ws); err == nil {
+			c.Call(ctx, "Browser.close", map[string]any{})
+			c.Close()
 		}
 	}
 	done := make(chan error, 1)
