@@ -114,68 +114,67 @@ func TestReadInventsAGUIDForANewBookmark(t *testing.T) {
 		}
 	}
 	s.mu.Lock()
-	provisional := s.guid[dir].provisional[g]
+	kept := s.keys[dir]["99"].GUID
 	s.mu.Unlock()
-	if !provisional {
-		t.Error("the invented guid was not marked provisional, so Reconcile would never replace it")
+	if kept != g {
+		t.Errorf("the new guid %s was not remembered for browser id 99 (got %q), so it would be lost when Helium quits", g, kept)
 	}
 }
 
-// Once the browser quits it writes its own guid for that bookmark. Reconcile
-// must swap the invented one for the real one, keyed on the browser id.
-// Without this the bookmark exists twice, once under each guid.
-func TestReconcileReplacesTheInventedGUID(t *testing.T) {
+// quitFile is the Bookmarks file Helium writes on quit, with one more link,
+// id 99, under the random guid Helium chose for it.
+func quitFile(heliumGUID, url string) string {
+	return strings.Replace(fileJSON,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
+			`{"date_added":"13300000000000000","guid":"`+heliumGUID+`","id":"99","name":"Made while open","type":"url","url":"`+url+`"}`, 1)
+}
+
+// A bookmark made while Helium was open must keep its sync guid after Helium
+// quits and writes its own random one, also when the app restarted in
+// between. Otherwise the file reads as "deleted, and a new one made", on
+// both computers in turn.
+func TestABookmarkMadeWhileOpenKeepsItsKeyAfterQuit(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	keys := filepath.Join(t.TempDir(), "live-keys.json")
+	s := New(userData)
+	s.KeysFile = keys
+	connect(s, dir, append(browserNodes(),
+		Node{ID: "99", ParentID: "1", Index: 2, Title: "Made while open", URL: "https://example.com/new"}))
+	f, _ := s.ReadBookmarks(dir)
+	key := guidsByTitle(f)["Made while open"]
+
+	// The app restarts; Helium quits and writes its own guid for id 99.
+	after := New(userData)
+	after.KeysFile = keys
+	file := mustParse(t, quitFile("bbbbbbbb-0000-4000-8000-000000000099", "https://example.com/new"))
+	if n := after.RestoreKeys(dir, file); n != 1 {
+		t.Fatalf("RestoreKeys put back %d key(s), want 1", n)
+	}
+	if got := guidsByTitle(file)["Made while open"]; got != key {
+		t.Errorf("after quit the bookmark has guid %s, want its sync key %s", got, key)
+	}
+	if got := guidsByTitle(file)["SVGL"]; got != "aaaaaaaa-0000-4000-8000-000000000001" {
+		t.Errorf("an ordinary bookmark's guid changed to %s", got)
+	}
+	// Done once: the next file read changes nothing.
+	again := mustParse(t, quitFile("cccccccc-0000-4000-8000-000000000099", "https://example.com/new"))
+	if n := after.RestoreKeys(dir, again); n != 0 {
+		t.Errorf("RestoreKeys put back %d key(s) a second time", n)
+	}
+}
+
+// If browser id 99 now holds something else, the remembered key must not be
+// forced onto it.
+func TestRestoreKeysIgnoresAnIDThatChangedMeaning(t *testing.T) {
 	userData, dir := profileWithFile(t, fileJSON)
 	s := New(userData)
 	connect(s, dir, append(browserNodes(),
 		Node{ID: "99", ParentID: "1", Index: 2, Title: "Made while open", URL: "https://example.com/new"}))
-
-	f, _ := s.ReadBookmarks(dir)
-	invented := guidsByTitle(f)["Made while open"]
-	if invented == "" {
-		t.Fatal("no guid was invented")
-	}
-
-	// Helium quits and writes the file, giving that bookmark its real guid.
-	const realGUID = "bbbbbbbb-0000-4000-8000-000000000099"
-	quit := strings.Replace(fileJSON,
-		`{"children":[`+"\n"+`     {"date_added"`,
-		`{"children":[`+"\n"+`     {"date_added"`, 1)
-	quit = strings.Replace(quit,
-		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
-		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
-			`{"date_added":"13300000000000000","guid":"`+realGUID+`","id":"99","name":"Made while open","type":"url","url":"https://example.com/new"}`, 1)
-	if err := os.WriteFile(filepath.Join(dir, "Bookmarks"), []byte(quit), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	remap := s.Reconcile(dir)
-	if remap[invented] != realGUID {
-		t.Fatalf("Reconcile mapped %s -> %q, want %q", invented, remap[invented], realGUID)
-	}
-	s.mu.Lock()
-	stillProvisional := s.guid[dir].provisional[invented]
-	nowKnown := s.guid[dir].toGUID["99"]
-	s.mu.Unlock()
-	if stillProvisional {
-		t.Error("the guid is still marked provisional after Reconcile")
-	}
-	if nowKnown != realGUID {
-		t.Errorf("id 99 now maps to %q, want %q", nowKnown, realGUID)
-	}
-}
-
-// Reconcile must do nothing when there is nothing invented, so an ordinary
-// sync is never disturbed.
-func TestReconcileIsQuietWithNothingInvented(t *testing.T) {
-	userData, dir := profileWithFile(t, fileJSON)
-	s := New(userData)
-	connect(s, dir, browserNodes())
-	if _, ok := s.ReadBookmarks(dir); !ok {
-		t.Fatal("ReadBookmarks said no browser is connected")
-	}
-	if remap := s.Reconcile(dir); len(remap) != 0 {
-		t.Errorf("Reconcile changed %d guid(s) when none were invented: %v", len(remap), remap)
+	s.ReadBookmarks(dir)
+	file := mustParse(t, quitFile("bbbbbbbb-0000-4000-8000-000000000099", "https://example.com/something-else"))
+	if n := s.RestoreKeys(dir, file); n != 0 {
+		t.Errorf("a key was forced onto a different bookmark (%d)", n)
 	}
 }
 

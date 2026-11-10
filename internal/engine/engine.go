@@ -81,6 +81,11 @@ type LiveBookmarks interface {
 	ReadBookmarks(profileDir string) (f *bookmarks.File, ok bool)
 	// WriteBookmarks asks the browser to make its tree match f.
 	WriteBookmarks(profileDir string, f *bookmarks.File) error
+	// RestoreKeys is called on a Bookmarks file read after Helium quit. It
+	// puts back the sync guid of each bookmark made in the open browser,
+	// where Helium wrote its own, so the file does not read as that bookmark
+	// deleted and a new one made.
+	RestoreKeys(profileDir string, f *bookmarks.File) int
 }
 
 // closed is checked right before each write into Helium's folder: if a
@@ -586,6 +591,9 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 			bf, err = bookmarks.Parse(raw)
 			if err != nil {
 				return nil, err
+			}
+			if cfg.Live != nil {
+				cfg.Live.RestoreKeys(dir, bf)
 			}
 		}
 		bf, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])

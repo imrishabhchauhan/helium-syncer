@@ -58,6 +58,8 @@ func (b *browserLive) ReadBookmarks(dir string) (*bookmarks.File, bool) {
 	return b.tree, true
 }
 
+func (b *browserLive) RestoreKeys(string, *bookmarks.File) int { return 0 }
+
 func (b *browserLive) WriteBookmarks(dir string, f *bookmarks.File) error {
 	b.applied, b.tree = f, f
 	return nil

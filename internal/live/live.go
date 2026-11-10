@@ -12,10 +12,12 @@
 // Chromium documents as unique within the profile and unchanged across
 // restarts. The Bookmarks file carries both, so this package reads the file
 // once to learn id -> guid, and translates in both directions. A bookmark
-// made in the browser while it is open has an id this package has not seen:
-// it gets a provisional guid now, and `Reconcile` swaps in Chromium's real
-// one the next time the file is read. Without that step the same bookmark
-// would exist twice, once under each guid.
+// made in the browser while it is open, or by the extension because the
+// other computer sent it, has no guid the sync knows: it gets one now, kept
+// by browser id (see bookmarkKey), and RestoreKeys writes it into the file
+// after Helium quits, in place of the random guid Helium chose. Without that
+// step every such bookmark would read as deleted and made again, on both
+// computers in turn.
 package live
 
 import (
@@ -75,6 +77,9 @@ type Msg struct {
 	Profile string `json:"profile,omitempty"`
 	Nodes   []Node `json:"nodes,omitempty"`
 	Reason  string `json:"reason,omitempty"`
+	// Created answers an "apply": for each bookmark the extension made, the
+	// app's placeholder ("new:<guid>") and the browser id Helium gave it.
+	Created map[string]string `json:"created,omitempty"`
 }
 
 // chromiumRoots maps the browser's folder types to the names the Bookmarks
@@ -98,6 +103,9 @@ type conn struct {
 	profile string // the profile directory, e.g. ...\User Data\Profile 2
 	nodes   []Node // the tree as the browser last reported it
 	seen    bool   // a tree has arrived at least once
+	// pending are the bookmarks the last "apply" asked the browser to make,
+	// by placeholder, until the extension says which ids they got.
+	pending map[string]Node
 }
 
 // Server holds the connected browsers and translates between the extension's
@@ -112,19 +120,124 @@ type Server struct {
 	// browser sets Origin itself and a web page cannot forge another
 	// extension's, so this is what keeps other pages out.
 	AllowOrigin func(origin string) bool
+	// KeysFile keeps the sync keys of bookmarks made in an open browser
+	// (see bookmarkKey), so they survive the app restarting before Helium
+	// quits. Empty keeps them in memory only.
+	KeysFile string
 
 	mu    sync.Mutex
-	conns map[string]*conn   // by profile directory
-	guid  map[string]idGUIDs // by profile directory
+	conns map[string]*conn                  // by profile directory
+	guid  map[string]idGUIDs                // by profile directory
+	keys  map[string]map[string]bookmarkKey // profile directory -> browser id -> key
+}
+
+// bookmarkKey is the sync identity of a bookmark that exists in the open
+// browser but not yet in its file: one the extension made because the other
+// computer sent it, or one the person made while Helium was open.
+//
+// The merge engine knows every bookmark by a guid. The extensions API cannot
+// set or read that guid, so when Helium quits it writes a random one of its
+// own for such a bookmark. Read as it is, the file would then say "that
+// bookmark was deleted, and here is a new one", and the other computer would
+// do the same in turn, back and forth. Remembering the key by browser id
+// (ids do not change) lets the sync after the quit put the right guid back
+// (RestoreKeys). URL and title make sure the id still means the same thing.
+type bookmarkKey struct {
+	GUID   string `json:"guid"`
+	URL    string `json:"url,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Folder bool   `json:"folder,omitempty"`
+}
+
+// sameThing reports whether a file node is still the bookmark k was made for.
+func (k bookmarkKey) sameThing(node map[string]any) bool {
+	folder := str(node["type"]) == "folder"
+	if folder != k.Folder {
+		return false
+	}
+	if folder {
+		return str(node["name"]) == k.Title
+	}
+	return str(node["url"]) == k.URL
+}
+
+// loadKeys reads KeysFile once. The caller holds s.mu.
+func (s *Server) loadKeys() {
+	if s.keys != nil {
+		return
+	}
+	s.keys = map[string]map[string]bookmarkKey{}
+	if s.KeysFile == "" {
+		return
+	}
+	if b, err := os.ReadFile(s.KeysFile); err == nil {
+		json.Unmarshal(b, &s.keys)
+		if s.keys == nil {
+			s.keys = map[string]map[string]bookmarkKey{}
+		}
+	}
+}
+
+// saveKeys writes KeysFile. The caller holds s.mu.
+func (s *Server) saveKeys() {
+	if s.KeysFile == "" {
+		return
+	}
+	b, err := json.Marshal(s.keys)
+	if err != nil {
+		return
+	}
+	os.MkdirAll(filepath.Dir(s.KeysFile), 0o700)
+	tmp := s.KeysFile + ".tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		os.Rename(tmp, s.KeysFile)
+	}
+}
+
+// remember records a key for a browser id. The caller holds s.mu.
+func (s *Server) remember(profileDir, id string, k bookmarkKey) {
+	s.loadKeys()
+	if s.keys[profileDir] == nil {
+		s.keys[profileDir] = map[string]bookmarkKey{}
+	}
+	s.keys[profileDir][id] = k
+	s.saveKeys()
+}
+
+// RestoreKeys puts the remembered sync keys back into a Bookmarks file read
+// after Helium quit, where Helium wrote its own guid instead, and forgets
+// them: from now on the file itself carries the right guid. It returns how
+// many it put back. A key whose id now holds something else is dropped.
+func (s *Server) RestoreKeys(profileDir string, f *bookmarks.File) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.loadKeys()
+	ks := s.keys[profileDir]
+	if len(ks) == 0 {
+		return 0
+	}
+	inFile := map[string]bool{}
+	walkFile(f, func(_ map[string]any, _, guid string) { inFile[guid] = true })
+	n := 0
+	walkFile(f, func(node map[string]any, _, guid string) {
+		k, ok := ks[str(node["id"])]
+		if !ok || guid == k.GUID || inFile[k.GUID] || !k.sameThing(node) {
+			return
+		}
+		node["guid"] = k.GUID
+		inFile[k.GUID] = true
+		n++
+	})
+	delete(s.keys, profileDir)
+	s.saveKeys()
+	delete(s.guid, profileDir) // learn from the file again
+	return n
 }
 
 // idGUIDs is one profile's translation between the two kinds of id.
 type idGUIDs struct {
 	toGUID map[string]string // browser id  -> file guid
 	toID   map[string]string // file guid   -> browser id
-	// provisional guids this package invented for bookmarks made while the
-	// browser was open, waiting for Reconcile to replace them.
-	provisional map[string]bool
 	// added is each bookmark's date_added exactly as the file has it. The
 	// browser reports milliseconds and the file keeps microseconds; without
 	// the file's value every bookmark would look changed on each switch
@@ -224,6 +337,25 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 			if changed && s.Changed != nil {
 				s.Changed(profile)
 			}
+		case "created":
+			s.mu.Lock()
+			if c.profile != "" {
+				ids, ok := s.guid[c.profile]
+				for placeholder, id := range m.Created {
+					want, known := c.pending[placeholder]
+					guid := strings.TrimPrefix(placeholder, "new:")
+					if !known || id == "" || guid == placeholder {
+						continue
+					}
+					if ok {
+						ids.toGUID[id] = guid
+						ids.toID[guid] = id
+					}
+					s.remember(c.profile, id, bookmarkKey{GUID: guid, URL: want.URL, Title: want.Title, Folder: want.Folder})
+					delete(c.pending, placeholder)
+				}
+			}
+			s.mu.Unlock()
 		case "pong":
 			// keeps the extension's service worker awake; nothing to do
 		}
@@ -319,17 +451,25 @@ func str(v any) string {
 }
 
 // learn reads a profile's Bookmarks file and records id -> guid. The file is
-// whatever the browser last wrote, which is enough: ids do not change.
+// whatever the browser last wrote, which is enough: ids do not change. The
+// caller holds s.mu.
 func (s *Server) learn(profileDir string) idGUIDs {
-	m := idGUIDs{toGUID: map[string]string{}, toID: map[string]string{}, provisional: map[string]bool{}, added: map[string]string{}}
+	m := idGUIDs{toGUID: map[string]string{}, toID: map[string]string{}, added: map[string]string{}}
 	f, err := bookmarks.Load(filepath.Join(profileDir, "Bookmarks"))
 	if err != nil {
 		return m
 	}
+	s.loadKeys()
+	remembered := s.keys[profileDir]
 	walkFile(f, func(n map[string]any, _, guid string) {
 		id := str(n["id"])
 		if id == "" || guid == "" {
 			return
+		}
+		// Helium reopened before a sync put the remembered key into the
+		// file: the key, not Helium's own guid, is this bookmark's identity.
+		if k, ok := remembered[id]; ok && k.sameThing(n) {
+			guid = k.GUID
 		}
 		m.toGUID[id] = guid
 		m.toID[guid] = id
@@ -337,6 +477,14 @@ func (s *Server) learn(profileDir string) idGUIDs {
 			m.added[id] = a
 		}
 	})
+	// Bookmarks the browser holds but the file does not have yet: made or
+	// received while Helium is open, and remembered then.
+	for id, k := range remembered {
+		if _, inFile := m.toGUID[id]; !inFile {
+			m.toGUID[id] = k.GUID
+			m.toID[k.GUID] = id
+		}
+	}
 	for root, guid := range rootGUIDs {
 		if n := f.Root(root); n != nil {
 			if id := str(n["id"]); id != "" {
@@ -348,16 +496,18 @@ func (s *Server) learn(profileDir string) idGUIDs {
 	return m
 }
 
-// guidFor returns the file guid for a browser id, inventing a provisional one
-// for a bookmark made while the browser was open. Reconcile replaces it later.
-func (m idGUIDs) guidFor(id string) string {
-	if g, ok := m.toGUID[id]; ok {
+// guidFor returns the sync guid for a browser node. A bookmark the person
+// made while the browser was open has none yet: one is made for it and
+// remembered, so it keeps it after Helium quits (see bookmarkKey). The caller
+// holds s.mu.
+func (s *Server) guidFor(profileDir string, m idGUIDs, n Node) string {
+	if g, ok := m.toGUID[n.ID]; ok {
 		return g
 	}
 	g := uuid.NewString()
-	m.toGUID[id] = g
-	m.toID[g] = id
-	m.provisional[g] = true
+	m.toGUID[n.ID] = g
+	m.toID[g] = n.ID
+	s.remember(profileDir, n.ID, bookmarkKey{GUID: g, URL: n.URL, Title: n.Title, Folder: n.Folder})
 	return g
 }
 
@@ -370,13 +520,13 @@ func (s *Server) ReadBookmarks(profileDir string) (*bookmarks.File, bool) {
 		s.mu.Unlock()
 		return nil, false
 	}
+	defer s.mu.Unlock() // the maps are shared with the connection's reader
 	nodes := append([]Node(nil), c.nodes...)
 	ids, known := s.guid[profileDir]
 	if !known {
 		ids = s.learn(profileDir)
 		s.guid[profileDir] = ids
 	}
-	s.mu.Unlock()
 
 	byParent := map[string][]Node{}
 	roots := map[string]string{} // browser id -> file root name
@@ -398,7 +548,7 @@ func (s *Server) ReadBookmarks(profileDir string) (*bookmarks.File, bool) {
 		var out []any
 		for _, n := range byParent[parentID] {
 			node := map[string]any{
-				"guid":       ids.guidFor(n.ID),
+				"guid":       s.guidFor(profileDir, ids, n),
 				"id":         n.ID,
 				"name":       n.Title,
 				"date_added": ids.dateAdded(n.ID, n.DateAdded),
@@ -495,7 +645,12 @@ func chromeTime(ms int64) string {
 func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 	s.mu.Lock()
 	c, ok := s.conns[profileDir]
-	ids := s.guid[profileDir]
+	ids, known := s.guid[profileDir]
+	if ok && c.seen && !known {
+		// Without the id map every bookmark would go out as new.
+		ids = s.learn(profileDir)
+		s.guid[profileDir] = ids
+	}
 	s.mu.Unlock()
 	if !ok || !c.seen {
 		return errors.New("live: no browser connected for this profile")
@@ -547,6 +702,15 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 	if sameShape(out, c.nodes) {
 		return nil
 	}
+	pending := map[string]Node{}
+	for _, n := range out {
+		if strings.HasPrefix(n.ID, "new:") {
+			pending[n.ID] = n
+		}
+	}
+	s.mu.Lock()
+	c.pending = pending
+	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return wsjson.Write(ctx, c.ws, Msg{Type: "apply", Profile: profileDir, Nodes: out})
@@ -595,39 +759,6 @@ func folderType(root string) string {
 		}
 	}
 	return ""
-}
-
-// Reconcile is called after the browser has quit and written its file. Every
-// bookmark made while the browser was open now has Chromium's own guid in the
-// file; this swaps the provisional guid this package invented for the real
-// one, keyed on the browser id, which does not change. remap tells the caller
-// which guids moved so stored state can follow.
-func (s *Server) Reconcile(profileDir string) (remap map[string]string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ids, ok := s.guid[profileDir]
-	if !ok || len(ids.provisional) == 0 {
-		return nil
-	}
-	fresh := s.learn(profileDir)
-	remap = map[string]string{}
-	for guid := range ids.provisional {
-		id := ids.toID[guid]
-		real, ok := fresh.toGUID[id]
-		if !ok || real == guid {
-			continue
-		}
-		remap[guid] = real
-		delete(ids.toGUID, id)
-		delete(ids.toID, guid)
-		ids.toGUID[id] = real
-		ids.toID[real] = id
-		delete(ids.provisional, guid)
-	}
-	if len(remap) == 0 {
-		return nil
-	}
-	return remap
 }
 
 // OriginOf builds the AllowOrigin check for one extension id.

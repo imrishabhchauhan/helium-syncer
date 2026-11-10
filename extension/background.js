@@ -81,13 +81,13 @@ async function sendTree(why) {
 // remove last, so a bookmark is never homeless in between.
 async function apply(target) {
   applying = true;
+  const newId = new Map();        // the app's placeholder -> Helium's id
   try {
     const have = new Map();
     for (const n of await currentTree()) have.set(n.id, n);
 
     // 1. create the ones this browser has never seen. The app names them
     //    "new:<its own id>" because only Helium can hand out a real id.
-    const newId = new Map();      // the app's placeholder -> Helium's id
     const realId = (id) => newId.get(id) || id;
     for (const want of target) {
       if (!want.id.startsWith("new:")) continue;
@@ -143,6 +143,7 @@ async function apply(target) {
   } finally {
     applying = false;
   }
+  return newId;
 }
 
 function depth(have, node) {
@@ -186,7 +187,12 @@ function connect() {
       return;
     }
     if (msg.type === "apply" && Array.isArray(msg.nodes)) {
-      await apply(msg.nodes);
+      const made = await apply(msg.nodes);
+      // Say which id each new bookmark got, before the tree, so the app
+      // knows them as the bookmarks it sent and not as new ones.
+      if (made.size && socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "created", version: VERSION, created: Object.fromEntries(made) }));
+      }
       await sendTree("applied");      // tell the app what we ended up with
     } else if (msg.type === "refused") {
       console.warn("Helium Syncer:", msg.reason || "the app refused this connection");

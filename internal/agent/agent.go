@@ -185,6 +185,7 @@ func New() (*Agent, error) {
 	a.Power = power.Read
 	a.Mode = configMode()
 	a.Live = live.New(cfg.UserData)
+	a.Live.KeysFile = filepath.Join(app.Dir(), "live-keys.json")
 	a.Live.AllowOrigin = live.OriginOf(ExtensionID)
 	a.Live.Changed = func(string) { a.markLive() }
 	a.LiveConnected = func() bool { return len(a.Live.Profiles()) > 0 }
@@ -203,12 +204,6 @@ func New() (*Agent, error) {
 		}
 		ec.Live = a.Live
 		rep, err := runLow(ctx, ec)
-		// Helium has quit and written its file, so any bookmark made while
-		// it was open now has Chromium's own id in there. Swap ours for it,
-		// or the same bookmark would be counted twice.
-		for _, p := range a.Live.Profiles() {
-			a.Live.Reconcile(p)
-		}
 		// Helium is closed and its files are settled: the one moment the
 		// companion extension can be added to a profile.
 		if err == nil && !ec.Off[engine.KindBookmarks] {

@@ -220,3 +220,88 @@ func TestANewConnectionLearnsTheFileAgain(t *testing.T) {
 		t.Errorf("after reconnecting, date_added %s: the old file was still used", got)
 	}
 }
+
+// A bookmark from the other computer is made by the extension, and Helium
+// gives it a new id. The app must learn that id is the bookmark it sent, or it
+// reads it back as a new bookmark (and the sent one as deleted), sends both,
+// and the other computer does the same in turn. Seen on the real Windows PC:
+// "sent 2" right after receiving 1.
+func TestAReceivedBookmarkKeepsItsKey(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	s.KeysFile = filepath.Join(t.TempDir(), "live-keys.json")
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+	var hello Msg
+	wsjson.Read(ctx, ws, &hello)
+	wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: browserNodes()})
+	for !s.Connected(dir) {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// The merged tree has one bookmark from the Mac.
+	const fromMac = "dddddddd-0000-4000-8000-00000000000a"
+	merged := mustParse(t, strings.Replace(fileJSON,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
+			`{"date_added":"13300000000000000","guid":"`+fromMac+`","id":"0","name":"From the Mac","type":"url","url":"https://mac.example/"}`, 1))
+	if err := s.WriteBookmarks(dir, merged); err != nil {
+		t.Fatal(err)
+	}
+	var apply Msg
+	if err := wsjson.Read(ctx, ws, &apply); err != nil || apply.Type != "apply" {
+		t.Fatalf("no apply: %v %v", apply.Type, err)
+	}
+	placeholder := ""
+	for _, n := range apply.Nodes {
+		if n.Title == "From the Mac" {
+			placeholder = n.ID
+		}
+	}
+	if placeholder != "new:"+fromMac {
+		t.Fatalf("the new bookmark went out as %q", placeholder)
+	}
+
+	// The extension makes it; Helium calls it 500.
+	made := append(browserNodes(), Node{ID: "500", ParentID: "1", Index: 1, Title: "From the Mac", URL: "https://mac.example/"})
+	wsjson.Write(ctx, ws, Msg{Type: "created", Version: Version, Created: map[string]string{placeholder: "500"}})
+	wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: made})
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		s.mu.Lock()
+		n := len(s.conns[dir].nodes)
+		s.mu.Unlock()
+		if n == len(made) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	f, _ := s.ReadBookmarks(dir)
+	if got := guidsByTitle(f)["From the Mac"]; got != fromMac {
+		t.Fatalf("while open, the received bookmark reads as guid %s, want %s", got, fromMac)
+	}
+
+	// Helium quits and writes its own random guid for id 500.
+	quit := mustParse(t, strings.Replace(fileJSON,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"}`,
+		`"name":"SVGL","type":"url","url":"https://svgl.app/"},`+
+			`{"date_added":"13300000000000000","guid":"eeeeeeee-0000-4000-8000-0000000000ee","id":"500","name":"From the Mac","type":"url","url":"https://mac.example/"}`, 1))
+	if n := s.RestoreKeys(dir, quit); n != 1 {
+		t.Fatalf("RestoreKeys put back %d, want 1", n)
+	}
+	if got := guidsByTitle(quit)["From the Mac"]; got != fromMac {
+		t.Errorf("after quit the received bookmark has guid %s, want %s", got, fromMac)
+	}
+}

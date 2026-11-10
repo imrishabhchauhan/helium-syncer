@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Helium Syncer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Keeps your bookmarks the same on your other computer while you are using Helium.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAj0SSdL9Tjbe3nL5Uegk7o/8kZ4GfaXCb2y+S5IXxmUFQ9wVYwQjZmlrHdlsmGFh2Rbid0m5mypFCxVNU7hpSByYpFFvngUlXOVBdzoZ/F+Rska8vtwfPuJObkLZHXwaLQZbQGuyst88EALpvXyj33kpc/DJ7ue3efH+wt9isJsOrm/J0p0y0VFbYK/Yc57yExuqoHsfwMHqDhKiH9ideqwJUrzKKlujGQ+18/4c/mmr5z319ssT6h9pJrwHI8bo7A18InpMnFeh4iCl89Aymx3a0icBXcbSUzyssX8WPKx/sgqOOa+4IY7LKJCR/Nz0QzGYWvCSyg4ejy9EOqc9rQQIDAQAB",
   "permissions": [
