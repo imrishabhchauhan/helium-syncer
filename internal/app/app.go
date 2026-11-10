@@ -47,6 +47,9 @@ type Config struct {
 	Theme       string    `json:"theme,omitempty"`       // "dark" or "" (light)
 }
 
+// DefaultOff is the kind a new computer does not sync until switched on.
+const DefaultOff = "history"
+
 // IsOff reports whether a kind (engine.Kind*) is switched off here.
 func (c *Config) IsOff(kind string) bool {
 	for _, k := range c.Off {
@@ -86,6 +89,10 @@ func Load() (*Config, error) {
 	c := &Config{Server: cloud.DefaultServer}
 	data, err := os.ReadFile(configPath())
 	if errors.Is(err, fs.ErrNotExist) {
+		// A new computer starts with history off: it is most of the data
+		// and the work, and of little use on the other computer. The setup
+		// screen shows the switch, so a person who wants it turns it on.
+		c.Off = []string{DefaultOff}
 		return c, nil
 	}
 	if err != nil {

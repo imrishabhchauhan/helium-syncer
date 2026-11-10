@@ -43,6 +43,11 @@ type Timing struct {
 	// LivePullWatching is the same while Watch is connected: the server says
 	// when there is news, so this is only a safety net.
 	LivePullWatching time.Duration
+	// LiveBatchBattery is, on battery, the least time between two syncs
+	// while Helium is open: changes made here and changes from the other
+	// computer wait, and go in one sync (the owner's choice: battery
+	// before speed). Zero syncs each change at once.
+	LiveBatchBattery time.Duration
 	MaxBackoff       time.Duration
 }
 
@@ -50,11 +55,13 @@ type Timing struct {
 // a pull is one small download when nothing changed.
 var DefaultTiming = Timing{Poll: 5 * time.Second, PollBattery: 15 * time.Second, AfterQuit: 4 * time.Second,
 	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute,
-	// Normally the server says when there is news (Watch), so changes from
-	// the other computer arrive in about a second and nothing is asked in
-	// between but a safety-net check every 5 minutes. Without Watch, a check
-	// is one small request (CheckLive) every 5 s (15 s on battery).
-	LivePull: 5 * time.Second, LivePullBattery: 15 * time.Second, LivePullWatching: 5 * time.Minute,
+	// Plugged in, the server says when there is news (Watch), so changes
+	// from the other computer arrive in about a second, with a safety-net
+	// check every 5 minutes; without Watch, a check every 5 s. On battery
+	// there is no Watch (its news would wake the network between batches):
+	// one small check every 5 minutes, and at most one sync in 5 minutes.
+	LivePull: 5 * time.Second, LivePullBattery: 5 * time.Minute, LivePullWatching: 5 * time.Minute,
+	LiveBatchBattery: 5 * time.Minute,
 	MaxBackoff: 30 * time.Minute}
 
 // Battery modes (app.Config.Battery).
@@ -596,11 +603,17 @@ func (a *Agent) Run(ctx context.Context) error {
 			// one thing that can still sync, because the extension asks the
 			// browser to make the change instead of writing the file.
 			connected := !pluggedOnly && a.LiveConnected != nil && a.LiveConnected()
-			a.setWatch(ctx, connected)
-			if a.takeLive() {
+			batching := pw.OnBattery && t.LiveBatchBattery > 0
+			a.setWatch(ctx, connected && !batching)
+			if batching && now.Sub(lastLive) < t.LiveBatchBattery && !now.Before(lastLive) {
+				// On battery: changes wait for the next batch. The marks
+				// stay set, so nothing is lost.
+			} else if local, news := a.takeLive(), a.takeNews(); local || (news && connected) {
+				// One sync takes both what changed here and what came.
 				due, reason = true, liveReason
-			} else if a.takeNews() && connected {
-				due, reason = true, liveNewsReason
+				if !local {
+					reason = liveNewsReason
+				}
 			} else if every := t.LivePull; every > 0 && connected {
 				if a.isWatching() && t.LivePullWatching > 0 {
 					every = t.LivePullWatching
