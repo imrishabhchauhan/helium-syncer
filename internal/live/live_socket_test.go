@@ -70,3 +70,31 @@ func TestALargeTreeIsAccepted(t *testing.T) {
 		}
 	}
 }
+
+// The browser reports dates in milliseconds, the file keeps microseconds.
+// Reading through the browser must give back the file's exact value, or every
+// bookmark looks edited each time sync switches between the two (seen on a
+// real Windows PC: 357 bookmarks "changed" on the first live sync).
+func TestDatesKeepTheFilesPrecision(t *testing.T) {
+	body := strings.Replace(fileJSON, `"date_added":"13300000000000000","guid":"aaaaaaaa-0000-4000-8000-000000000001"`,
+		`"date_added":"13300000000000123","guid":"aaaaaaaa-0000-4000-8000-000000000001"`, 1)
+	userData, dir := profileWithFile(t, body)
+	s := New(userData)
+	nodes := browserNodes()
+	const epochMs = 11644473600000
+	nodes[2].DateAdded = 13300000000000123/1000 - epochMs     // what Chromium reports for SVGL
+	nodes[4].DateAdded = 13300000000000000/1000 - epochMs + 5 // Kenney: really a different moment
+	connect(s, dir, nodes)
+	f, ok := s.ReadBookmarks(dir)
+	if !ok {
+		t.Fatal("not connected")
+	}
+	got := map[string]string{}
+	walkFile(f, func(n map[string]any, _, _ string) { got[str(n["name"])] = str(n["date_added"]) })
+	if got["SVGL"] != "13300000000000123" {
+		t.Errorf("SVGL date_added %s, want the file's exact 13300000000000123", got["SVGL"])
+	}
+	if got["Kenney"] != "13300000000005000" {
+		t.Errorf("Kenney date_added %s, want the browser's 13300000000005000 (a real change)", got["Kenney"])
+	}
+}

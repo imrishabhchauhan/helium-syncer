@@ -125,6 +125,11 @@ type idGUIDs struct {
 	// provisional guids this package invented for bookmarks made while the
 	// browser was open, waiting for Reconcile to replace them.
 	provisional map[string]bool
+	// added is each bookmark's date_added exactly as the file has it. The
+	// browser reports milliseconds and the file keeps microseconds; without
+	// the file's value every bookmark would look changed on each switch
+	// between the browser and the file, and sync back and forth for ever.
+	added map[string]string
 }
 
 // New makes a Server. UserData is Helium's folder.
@@ -306,7 +311,7 @@ func str(v any) string {
 // learn reads a profile's Bookmarks file and records id -> guid. The file is
 // whatever the browser last wrote, which is enough: ids do not change.
 func (s *Server) learn(profileDir string) idGUIDs {
-	m := idGUIDs{toGUID: map[string]string{}, toID: map[string]string{}, provisional: map[string]bool{}}
+	m := idGUIDs{toGUID: map[string]string{}, toID: map[string]string{}, provisional: map[string]bool{}, added: map[string]string{}}
 	f, err := bookmarks.Load(filepath.Join(profileDir, "Bookmarks"))
 	if err != nil {
 		return m
@@ -318,6 +323,9 @@ func (s *Server) learn(profileDir string) idGUIDs {
 		}
 		m.toGUID[id] = guid
 		m.toID[guid] = id
+		if a := str(n["date_added"]); a != "" {
+			m.added[id] = a
+		}
 	})
 	for root, guid := range rootGUIDs {
 		if n := f.Root(root); n != nil {
@@ -383,7 +391,7 @@ func (s *Server) ReadBookmarks(profileDir string) (*bookmarks.File, bool) {
 				"guid":       ids.guidFor(n.ID),
 				"id":         n.ID,
 				"name":       n.Title,
-				"date_added": chromeTime(n.DateAdded),
+				"date_added": ids.dateAdded(n.ID, n.DateAdded),
 			}
 			if n.Folder {
 				node["type"] = "folder"
@@ -447,6 +455,20 @@ func rootName(name string) string {
 	default:
 		return "Mobile bookmarks"
 	}
+}
+
+// dateAdded is the file's own date_added when it is the same moment the
+// browser reported, to the millisecond; otherwise the browser's value.
+func (m idGUIDs) dateAdded(id string, ms int64) string {
+	browser := chromeTime(ms)
+	exact, ok := m.added[id]
+	if !ok || len(exact) < 4 || len(browser) < 4 {
+		return browser
+	}
+	if exact[:len(exact)-3] == browser[:len(browser)-3] {
+		return exact
+	}
+	return browser
 }
 
 // chromeTime turns milliseconds since 1970 into Chromium's microseconds
