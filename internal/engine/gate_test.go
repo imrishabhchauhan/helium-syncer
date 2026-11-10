@@ -23,8 +23,9 @@ func (c *countingTransport) Announce(ctx context.Context, d, n, v string) error 
 	return c.Transport.Announce(ctx, d, n, v)
 }
 
-// While Helium is open, a sync is one request: a version check that passed
-// in the last half hour holds. Closed syncs always check.
+// While Helium is open, a sync is one request: this computer's version is
+// told to the server at most every half hour. Nothing asks for the other
+// computers' versions any more (there is no version gate).
 func TestLiveSyncReusesVersionCheck(t *testing.T) {
 	ctx := context.Background()
 	ud := fakeUserData(t, ver)
@@ -37,7 +38,7 @@ func TestLiveSyncReusesVersionCheck(t *testing.T) {
 	if _, err := Run(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if ct.versions != 1 || ct.announces != 1 {
+	if ct.versions != 0 || ct.announces != 1 {
 		t.Fatalf("closed sync: %d checks, %d announces, want 1 and 1", ct.versions, ct.announces)
 	}
 	open := cfg
@@ -50,20 +51,20 @@ func TestLiveSyncReusesVersionCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if ct.versions != 1 || ct.announces != 1 {
+	if ct.versions != 0 || ct.announces != 1 {
 		t.Fatalf("live syncs asked again: %d checks, %d announces", ct.versions, ct.announces)
 	}
 	now = now.Add(GateReuse)
 	if _, err := Run(ctx, open); err != nil {
 		t.Fatal(err)
 	}
-	if ct.versions != 2 {
-		t.Fatalf("after %s the check must run again: %d checks", GateReuse, ct.versions)
+	if ct.announces != 2 || ct.versions != 0 {
+		t.Fatalf("after %s the version must be told again: %d announces, %d checks", GateReuse, ct.announces, ct.versions)
 	}
 	if _, err := Run(ctx, cfg); err != nil {
 		t.Fatal(err)
 	}
-	if ct.versions != 3 {
-		t.Fatalf("a closed sync must always check: %d checks", ct.versions)
+	if ct.announces != 3 || ct.versions != 0 {
+		t.Fatalf("a closed sync always tells its version, and nothing asks for others': %d announces, %d checks", ct.announces, ct.versions)
 	}
 }

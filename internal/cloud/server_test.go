@@ -48,10 +48,14 @@ func startServer(t *testing.T) string {
 	cmd.Env = append(os.Environ(), "WRANGLER_SEND_METRICS=false", "CI=1")
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
+	// wrangler starts a runtime process of its own that can keep the output
+	// open after wrangler is stopped (seen on Linux): without a limit, the
+	// cleanup below would wait for it for ever.
+	cmd.WaitDelay = 5 * time.Second
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait(); pw.Close() })
 	var logMu sync.Mutex
 	var logBuf bytes.Buffer
 	go func() {

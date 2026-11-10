@@ -15,8 +15,14 @@ import (
 )
 
 // SupportedVersions are the History schema versions this code was verified
-// against. Anything else is refused (version gate).
+// against. A newer one is used too when Chromium itself says code for one
+// of these can still use it (its meta "last_compatible_version"); anything
+// else is refused with ErrUnknownSchema.
 var SupportedVersions = map[int]bool{70: true}
+
+// ErrUnknownSchema means the History database is in a format this version
+// of Helium Syncer does not know. History waits; nothing else does.
+var ErrUnknownSchema = errors.New("history: this Helium keeps history in a format Helium Syncer does not know yet")
 
 // WebKit epoch: microseconds since 1601-01-01 UTC.
 const unixToWebKitMicros = 11644473600 * 1_000_000
@@ -58,11 +64,31 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, err
 	}
-	if !SupportedVersions[v] {
+	if !SupportedVersions[v] && !h.compatible(v) {
 		db.Close()
-		return nil, fmt.Errorf("history: schema version %d is not supported yet", v)
+		return nil, fmt.Errorf("%w (schema %d)", ErrUnknownSchema, v)
 	}
 	return h, nil
+}
+
+// compatible reports whether a newer schema v still works with code for a
+// known one: Chromium writes the oldest schema whose code can use the file
+// as meta "last_compatible_version", exactly for this question.
+func (h *DB) compatible(v int) bool {
+	var s string
+	if err := h.db.QueryRow(`SELECT value FROM meta WHERE key='last_compatible_version'`).Scan(&s); err != nil {
+		return false
+	}
+	last, err := strconv.Atoi(s)
+	if err != nil {
+		return false
+	}
+	for known := range SupportedVersions {
+		if v > known && last <= known {
+			return true
+		}
+	}
+	return false
 }
 
 // Close closes the database.

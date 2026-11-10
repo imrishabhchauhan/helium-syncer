@@ -153,7 +153,13 @@ type Report struct {
 	ReceivedByType map[string]int
 	ProfilesAdded  []string
 	Written        []string // files changed in Helium's folder, relative to it
-	Paused         string   // version gate message, when sync is paused
+	Paused         string   // why the whole sync is paused, if it is
+	// Untested is this computer's Helium version when it is not one the
+	// tests ran on. Sync goes on; the file checks decide (see Run).
+	Untested string `json:",omitempty"`
+	// Held says which items waited because a file's format was not one
+	// Helium Syncer understands, e.g. "settings and extensions (Default)".
+	Held []string `json:",omitempty"`
 	// Took is how long each step took, in milliseconds, e.g. "pull": 120.
 	// Steps inside profiles add up over all profiles.
 	Took map[string]int64 `json:",omitempty"`
@@ -182,9 +188,9 @@ func stepIn(ctx context.Context, name string) func() {
 	return func() {}
 }
 
-// GateReuse is how long a passed version check holds for syncs while Helium
-// is open. Helium cannot update itself while it runs, so this computer's
-// version is fixed meanwhile; the other computer's is checked again after.
+// GateReuse is how long a sync while Helium is open goes without telling the
+// server this computer's name and Helium version again. Helium cannot update
+// itself while it runs, so the version is fixed meanwhile.
 const GateReuse = 30 * time.Minute
 
 // ErrHeliumRunning: the folder is in use; try again after Helium quits.
@@ -236,11 +242,18 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		os.Remove(filepath.Join(cfg.StateDir, journalFile))
 	}
 
-	// 2. Version gate, and receive. Both ask the server: they run at the
-	// same time. Nothing is applied or sent before the gate passed.
+	// 2. Receive. There is no version gate: Helium updates often, and a list
+	// of tested versions stopped sync at each update. Each file is checked
+	// instead, right before it is written (prefhash.Verify for settings and
+	// extensions, the bookmarks checksum, the session file version, the
+	// History database's own compatibility number). A format this version
+	// of Helium Syncer does not understand pauses that item only.
 	version, err := helium.DataVersion(cfg.UserData)
 	if err != nil {
 		return rep, err
+	}
+	if !helium.Tested[version] {
+		rep.Untested = version
 	}
 	ctx = context.WithValue(ctx, timerKey{}, &rep)
 	defer rep.step("total")()
@@ -251,47 +264,30 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 		return rep, err
 	}
 	var (
-		peers    map[string]string
-		vErr     error
 		incoming []crdt.Op
 		next     string
 		pErr     error
 		wg       sync.WaitGroup
 	)
 	done = rep.step("server")
-	// A sync while Helium is open runs on every bookmark or tab change: it
-	// reuses a version check that passed a short while ago with the same
-	// Helium version, so it is one request, not three (battery, and speed).
-	gateFresh := cfg.WhileOpen && st.GateVersion == version &&
+	// This computer's name and Helium version, for the other computers'
+	// screens. A sync while Helium is open runs on every change, so it says
+	// it again only after GateReuse, or when the version changed: one
+	// request instead of two (battery, and speed).
+	announced := cfg.WhileOpen && st.GateVersion == version &&
 		cfg.Now().Sub(time.UnixMilli(st.GateChecked)) < GateReuse && !cfg.Now().Before(time.UnixMilli(st.GateChecked))
-	if !gateFresh {
-		wg.Add(2)
-		go func() { defer wg.Done(); peers, vErr = cfg.Transport.Versions(ctx, cfg.DeviceID) }()
-		// This computer's name and Helium version, for the other computers
-		// (also when the gate pauses: they then see which version this one has).
+	if !announced {
+		wg.Add(1)
 		go func() { defer wg.Done(); cfg.Transport.Announce(ctx, cfg.DeviceID, cfg.DeviceName, version) }()
 	}
 	wg.Add(1)
 	go func() { defer wg.Done(); incoming, next, pErr = cfg.Transport.Pull(ctx, st.Cursor) }()
 	wg.Wait()
 	done()
-	if vErr != nil {
-		return rep, vErr
-	}
-	if gateFresh {
-		// passed recently; nothing to check
-	} else if err := helium.CheckVersions(version, peers); err != nil {
-		var ge *helium.GateError
-		if errors.As(err, &ge) {
-			rep.Paused = ge.Message
-			return rep, nil // the pulled ops are not used: the cursor stays
-		}
-		return rep, err
-	}
 	if pErr != nil {
 		return rep, pErr
 	}
-	if !gateFresh {
+	if !announced {
 		st.GateChecked, st.GateVersion = cfg.Now().UnixMilli(), version
 	}
 	clock := crdt.NewClock(cfg.DeviceID, func() int64 { return cfg.Now().UnixMilli() })
@@ -562,6 +558,19 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	if err != nil {
 		return nil, err
 	}
+	// Helium signs its protected settings. If this version of Helium Syncer
+	// cannot reproduce the signature Helium wrote, Helium would reset what
+	// is written here and switch extensions off: settings and extensions
+	// wait for an update instead (the rest syncs on).
+	if exists(securePath) && !prefhash.Verify(secure, prefhash.Calculator{DeviceID: cfg.MachineID}) {
+		off := map[string]bool{}
+		for k, v := range cfg.Off {
+			off[k] = v
+		}
+		off[KindSettings], off[KindExtensions] = true, true
+		cfg.Off, cfg.RestoreTabs = off, false
+		held(ctx, "settings and extensions ("+filepath.Base(dir)+")")
+	}
 	origNormal, origSecure := chromejson.Compact(normal), chromejson.Compact(secure)
 	prefs := merge.Prefs{Normal: normal, Secure: secure}
 	if cfg.RestoreTabs {
@@ -624,6 +633,7 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	} else {
 		bmPath := filepath.Join(dir, "Bookmarks")
 		var raw []byte
+		bmHeld := false
 		if !live {
 			var err error
 			raw, err = os.ReadFile(bmPath)
@@ -636,30 +646,27 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 			if err != nil {
 				return nil, err
 			}
-			if cfg.Live != nil {
+			// Helium checks the file's checksum. If ours no longer matches
+			// the one Helium wrote, the format changed: bookmarks wait (they
+			// still sync while Helium is open, through Helium itself).
+			if sum, _ := bf.Doc["checksum"].(string); sum != "" {
+				if md5, _ := bf.Checksums(); md5 != sum {
+					held(ctx, "bookmarks ("+filepath.Base(dir)+")")
+					keep(clock, byType[merge.TypeBookmark], func(crdt.Op) *crdt.Map { return ps.Bookmarks })
+					bmHeld = true
+				}
+			}
+			if cfg.Live != nil && !bmHeld {
 				cfg.Live.RestoreKeys(dir, bf)
 			}
 		}
-		bf, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])
-		ps.BookmarksBase = bmBase
-		out = append(out, ops...)
-		if live {
-			// The browser owns the file while it is open, so hand the merged
-			// tree to the extension and never touch the file ourselves.
-			if err := cfg.Live.WriteBookmarks(dir, bf); err != nil {
+		if !bmHeld {
+			merged, bmBase, ops := merge.SyncBookmarks(bf, ps.BookmarksBase, ps.Bookmarks, clock, byType[merge.TypeBookmark])
+			ps.BookmarksBase = bmBase
+			out = append(out, ops...)
+			if err := writeBookmarks(cfg, j, live, dir, bmPath, merged, raw); err != nil {
 				return nil, err
 			}
-		} else if enc := bf.Encode(cfg.GOOS); string(enc) != string(raw) || !exists(bmPath) {
-			if err := noteCreate(cfg, j, bmPath); err != nil {
-				return nil, err
-			}
-			if err := closed(cfg); err != nil {
-				return nil, err
-			}
-			if err := writeAtomic(bmPath, enc); err != nil {
-				return nil, err
-			}
-			j.Written = append(j.Written, bmPath)
 		}
 	}
 
@@ -686,49 +693,11 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 	done()
 	done = stepIn(ctx, "history")
 	histOps := append(byType[merge.TypeVisit], byType[merge.TypeTitle]...)
-	hp := filepath.Join(dir, "History")
-	seen := fileStamp(hp)
-	if seen != "" && seen == ps.HistorySeen && len(histOps) == 0 && !cfg.Off[KindHistory] {
-		// Helium has not run since the last history sync, and nothing came.
-	} else if exists(hp) && !cfg.Off[KindHistory] {
-		if err := closed(cfg); err != nil {
-			return nil, err
-		}
-		if err := ps.loadHistory(cfg.StateDir); err != nil {
-			return nil, err
-		}
-		db, err := history.Open(hp)
-		if err != nil {
-			return nil, err
-		}
-		now := cfg.Now().UnixMicro() + 11644473600*1_000_000
-		hb, ops, err := merge.SyncHistory(db, ps.HistoryBase, ps.Visits, ps.Titles, clock, histOps, merge.HistoryCutoff(now))
-		db.Close()
-		if err != nil {
-			return nil, err
-		}
-		ps.HistoryBase = hb
-		out = append(out, ops...)
-		if len(ops)+len(histOps) > 0 {
-			ps.changedHistory()
-		}
-		ps.HistorySeen = fileStamp(hp)
-	} else if len(histOps) > 0 {
-		// Kept for when this profile's history is synced. Only now is the
-		// history state read at all.
-		if err := ps.loadHistory(cfg.StateDir); err != nil {
-			return nil, err
-		}
-		ps.changedHistory()
-		for _, op := range histOps {
-			clock.Observe(op.Stamp)
-			if op.Type == merge.TypeVisit {
-				ps.Visits.Apply(op)
-			} else {
-				ps.Titles.Apply(op)
-			}
-		}
+	hops, err := syncHistory(ctx, cfg, ps, filepath.Join(dir, "History"), clock, histOps)
+	if err != nil {
+		return nil, err
 	}
+	out = append(out, hops...)
 
 	// Open tabs.
 	done()
@@ -802,6 +771,99 @@ func syncProfile(ctx context.Context, cfg Config, ps *ProfileState, dir string, 
 		}
 	}
 	return out, nil
+}
+
+// syncHistory syncs one profile's History database, or keeps what arrived
+// for later: when history is off, when Helium never made the database, or
+// when its format is one this version does not know (then it is reported
+// in Report.Held and the rest of the sync goes on). It skips the work when
+// Helium has not run since the last time and nothing arrived.
+func syncHistory(ctx context.Context, cfg Config, ps *ProfileState, hp string, clock *crdt.Clock, histOps []crdt.Op) ([]crdt.Op, error) {
+	if cfg.Off[KindHistory] || !exists(hp) {
+		return nil, keepHistory(cfg, ps, clock, histOps)
+	}
+	if len(histOps) == 0 && fileStamp(hp) == ps.HistorySeen {
+		return nil, nil // Helium has not run since the last history sync
+	}
+	if err := closed(cfg); err != nil {
+		return nil, err
+	}
+	if err := ps.loadHistory(cfg.StateDir); err != nil {
+		return nil, err
+	}
+	db, err := history.Open(hp)
+	if errors.Is(err, history.ErrUnknownSchema) {
+		held(ctx, "history ("+filepath.Base(filepath.Dir(hp))+")")
+		return nil, keepHistory(cfg, ps, clock, histOps)
+	}
+	if err != nil {
+		return nil, err
+	}
+	now := cfg.Now().UnixMicro() + 11644473600*1_000_000
+	hb, ops, err := merge.SyncHistory(db, ps.HistoryBase, ps.Visits, ps.Titles, clock, histOps, merge.HistoryCutoff(now))
+	db.Close()
+	if err != nil {
+		return nil, err
+	}
+	ps.HistoryBase = hb
+	if len(ops)+len(histOps) > 0 {
+		ps.changedHistory()
+	}
+	ps.HistorySeen = fileStamp(hp)
+	return ops, nil
+}
+
+// keepHistory stores history that arrived without touching Helium's
+// database. Only then is the history state read at all.
+func keepHistory(cfg Config, ps *ProfileState, clock *crdt.Clock, histOps []crdt.Op) error {
+	if len(histOps) == 0 {
+		return nil
+	}
+	if err := ps.loadHistory(cfg.StateDir); err != nil {
+		return err
+	}
+	ps.changedHistory()
+	for _, op := range histOps {
+		clock.Observe(op.Stamp)
+		if op.Type == merge.TypeVisit {
+			ps.Visits.Apply(op)
+		} else {
+			ps.Titles.Apply(op)
+		}
+	}
+	return nil
+}
+
+// writeBookmarks hands the merged tree to the open browser, or writes the
+// Bookmarks file when it changed (Helium closed).
+func writeBookmarks(cfg Config, j *journal, live bool, dir, bmPath string, bf *bookmarks.File, raw []byte) error {
+	if live {
+		// The browser owns the file while it is open, so hand the merged
+		// tree to the extension and never touch the file ourselves.
+		return cfg.Live.WriteBookmarks(dir, bf)
+	}
+	enc := bf.Encode(cfg.GOOS)
+	if string(enc) == string(raw) && exists(bmPath) {
+		return nil
+	}
+	if err := noteCreate(cfg, j, bmPath); err != nil {
+		return err
+	}
+	if err := closed(cfg); err != nil {
+		return err
+	}
+	if err := writeAtomic(bmPath, enc); err != nil {
+		return err
+	}
+	j.Written = append(j.Written, bmPath)
+	return nil
+}
+
+// held records an item that waited because of a file format (Report.Held).
+func held(ctx context.Context, what string) {
+	if rep, ok := ctx.Value(timerKey{}).(*Report); ok {
+		rep.Held = append(rep.Held, what)
+	}
 }
 
 // fileStamp is a file's size and change time, or "" when it is missing.

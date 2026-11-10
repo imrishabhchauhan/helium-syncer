@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/imrishabhchauhan/helium-syncer/internal/prefhash"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -293,7 +295,7 @@ func TestExtensionsFollowAcrossDevices(t *testing.T) {
 	}
 
 	// Disable on the Mac and change its data: both follow.
-	extensions.SetEnabled(macP, darkReader, false, "x")
+	extensions.SetEnabled(macP, darkReader, false, mac.MachineID) // as Helium does: signed for this computer
 	os.WriteFile(filepath.Join(macP, "Local Extension Settings", darkReader, "000003.log"), []byte("theme=light"), 0o600)
 	mustRun(mac)
 	mustRun(win)
@@ -306,7 +308,7 @@ func TestExtensionsFollowAcrossDevices(t *testing.T) {
 	}
 
 	// Uninstall on the Mac: removed on Windows, with a copy in the backup.
-	extensions.Remove(macP, darkReader, "x")
+	extensions.Remove(macP, darkReader, mac.MachineID) // as Helium does: signed for this computer
 	mustRun(mac)
 	rep := mustRun(win)
 	if list, _ := extensions.List(winP); len(list) != 0 {
@@ -325,33 +327,98 @@ func TestExtensionsFollowAcrossDevices(t *testing.T) {
 	t.Logf("last Windows run wrote %v", rep.Written)
 }
 
-func TestVersionGatePausesWithoutTouchingFiles(t *testing.T) {
+// A Helium version the tests never saw keeps syncing: there is no version
+// list to wait for. The file checks decide instead (see the next test).
+func TestNewHeliumVersionKeepsSyncing(t *testing.T) {
 	ctx := context.Background()
 	server := NewMemory()
-	server.Announce(ctx, "mac", "Rishabh's MacBook Air", "155.9.9999.1")
-	ud := fakeUserData(t, ver)
-	cfg := cfgFor(t, "win", ud, server)
-	snap := func() string {
-		var b strings.Builder
-		filepath.Walk(ud, func(p string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				data, _ := os.ReadFile(p)
-				b.WriteString(p + "=" + string(data) + "\n")
-			}
-			return nil
-		})
-		return b.String()
-	}
-	before := snap()
-	rep, err := Run(ctx, cfg)
+	macUD, winUD := fakeUserData(t, "156.0.9999.1"), fakeUserData(t, ver)
+	mac, win := cfgFor(t, "mac", macUD, server), cfgFor(t, "win", winUD, server)
+	LinkProfile(mac.StateDir, mac.DeviceID, "Default")
+	addBookmark(t, macUD, "fromnewmac", "From a newer Helium")
+	rep, err := Run(ctx, mac)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rep.Paused, "Rishabh's MacBook Air") {
-		t.Fatalf("pause message should name the other device: %q", rep.Paused)
+	if rep.Paused != "" || rep.Untested != "156.0.9999.1" {
+		t.Fatalf("a new Helium version must sync and be reported: paused %q, untested %q", rep.Paused, rep.Untested)
 	}
-	if snap() != before {
-		t.Fatal("a paused sync changed Helium's files")
+	if _, err := Run(ctx, win); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(t, winUD, "Profile 1"); !strings.Contains(got, "From a newer Helium") {
+		t.Fatalf("the bookmark from the newer Helium did not arrive: %s", got)
+	}
+}
+
+// A file whose format this version does not understand waits, alone, and
+// is never written: settings signed differently, a bookmarks checksum that
+// no longer matches.
+func TestFormatChangeHoldsOnlyThatItem(t *testing.T) {
+	ctx := context.Background()
+	server := NewMemory()
+	macUD, winUD := fakeUserData(t, ver), fakeUserData(t, ver)
+	mac, win := cfgFor(t, "mac", macUD, server), cfgFor(t, "win", winUD, server)
+	LinkProfile(mac.StateDir, mac.DeviceID, "Default")
+	addBookmark(t, macUD, "frommac", "From the Mac")
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, win); err != nil {
+		t.Fatal(err)
+	}
+	prof := filepath.Join(winUD, "Profile 1")
+
+	// 1. Settings signed in a way this version cannot reproduce.
+	secPath := filepath.Join(prof, "Secure Preferences")
+	v, _ := chromejson.Decode([]byte(`{"homepage":"https://a.example/","protection":{"macs":{"homepage":""}}}`))
+	doc := v.(map[string]any)
+	prefhash.Resign(doc, prefhash.Calculator{DeviceID: win.MachineID, Seed: []byte("a future scheme")}, false)
+	os.WriteFile(secPath, []byte(chromejson.Compact(doc)), 0o600)
+	secBefore, _ := os.ReadFile(secPath)
+	addBookmark(t, macUD, "frommac2", "Second from the Mac")
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Run(ctx, win)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(secPath); string(after) != string(secBefore) {
+		t.Fatal("Secure Preferences that did not verify were written")
+	}
+	if len(rep.Held) != 1 || !strings.Contains(rep.Held[0], "settings and extensions") {
+		t.Fatalf("held: %v, want settings and extensions", rep.Held)
+	}
+	if got := titles(t, winUD, "Profile 1"); !strings.Contains(got, "Second from the Mac") {
+		t.Fatalf("bookmarks should still sync: %s", got)
+	}
+
+	// 2. A bookmarks checksum this version does not reproduce.
+	bmPath := filepath.Join(prof, "Bookmarks")
+	raw, _ := os.ReadFile(bmPath)
+	bad := regexp.MustCompile(`"checksum":\s*"`).ReplaceAllStringFunc(string(raw), func(m string) string { return m + "0" })
+	if bad == string(raw) {
+		t.Fatal("setup: no checksum in the Bookmarks file")
+	}
+	os.WriteFile(bmPath, []byte(bad), 0o600)
+	addBookmark(t, macUD, "frommac3", "Third from the Mac")
+	if _, err := Run(ctx, mac); err != nil {
+		t.Fatal(err)
+	}
+	rep, err = Run(ctx, win)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(bmPath); string(after) != bad {
+		t.Fatal("a Bookmarks file with an unknown checksum was written")
+	}
+	found := false
+	for _, h := range rep.Held {
+		found = found || strings.Contains(h, "bookmarks")
+	}
+	if !found {
+		t.Fatalf("held: %v, want bookmarks", rep.Held)
 	}
 }
 

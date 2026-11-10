@@ -1,0 +1,71 @@
+# Tests for every change: all Go tests on Linux, Windows and macOS, and the
+# sync server on Cloudflare's local runtime. Free for public repositories.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    name: Go (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The same Go as the release builds (macOS 12 and Windows 10 support).
+          go-version: "1.26.10"
+      - name: Format
+        if: runner.os == 'Linux'
+        run: test -z "$(gofmt -l internal cmd extension testing)" || (gofmt -l internal cmd extension testing; exit 1)
+      - name: Vet
+        run: go vet ./...
+      - name: Test (Linux)
+        if: runner.os == 'Linux'
+        # Temporary files in memory: the history tests write a database
+        # thousands of times, and each disk sync is slow on a Linux runner
+        # (over 10 minutes instead of 4 seconds).
+        env:
+          TMPDIR: /dev/shm
+        run: go test ./...
+      - name: Test
+        if: runner.os != 'Linux'
+        run: go test ./...
+
+  server:
+    name: Sync server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+      - name: Install
+        working-directory: server
+        run: npm ci
+      - name: Type check
+        working-directory: server
+        run: npx tsc --noEmit
+      - name: Server tests (local Cloudflare runtime)
+        run: go test -v -tags server ./internal/cloud/

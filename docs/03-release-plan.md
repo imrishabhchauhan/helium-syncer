@@ -10,10 +10,10 @@
 
 | # | Part | Why it matters | Cost |
 |---|---|---|---|
-| 1 | **Tests on GitHub for every change** | Nothing broken reaches users | Free (public repositories get GitHub Actions for free) |
-| 2 | **Helium updates do not stop sync** | Helium updates often; today each update pauses sync for everyone | Free |
+| 1 | ✅ **Tests on GitHub for every change** (done 10 Nov 2026) | Nothing broken reaches users | Free (public repositories get GitHub Actions for free) |
+| 2 | ✅ **Helium updates do not stop sync** (done 10 Nov 2026) | Helium updates often; today each update pauses sync for everyone | Free |
 | 3 | **Downloads on the Releases page** | People need a file, not source code | Free |
-| 4 | **Signed downloads** | Without signing, macOS blocks the app and Windows shows a warning | Mac: USD 99 a year. Windows: free (SignPath) |
+| 4 | **Signed downloads** | Without signing, Windows shows a warning and macOS blocks a downloaded app | Free: Windows via SignPath; Mac without the Apple fee (see part 4) |
 | 5 | **Automatic updates** | Users never need to come back to GitHub | Free |
 | 6 | **Server ready for more people** | One shared free server for everyone can run out | Free at first; USD 5 a month later |
 | 7 | **Clean leave and uninstall** | "Leave" does not remove the helper extension or Developer mode today | Free |
@@ -27,11 +27,11 @@
 - Windows and macOS tests run on pull requests to `main` and on release tags.
 - The real-Helium tests (`-tags helium`) and the server tests (`-tags server`) run on a schedule and before each release.
 
-## 2. Helium updates do not stop sync
+## 2. Helium updates do not stop sync (done)
 
-Today `internal/helium/version.go` lists one tested Helium version. Any other version pauses sync.
+Done on 10 Nov 2026: the version list no longer stops sync. Before each write, the file is checked (settings signature, bookmarks checksum, session file version, History compatibility number); a format it does not understand pauses only that item, and the app says so. Tested the same day on Helium 0.21.2.1 (Chromium 157), two Chromium versions newer than before: all real-Helium tests passed. The workflow `.github/workflows/newest-helium.yml` runs the real-Helium tests on the newest Helium on Windows and macOS.
 
-**Recommended:**
+What was planned:
 
 - Decide by **file format**, not by version number. Helium Syncer already reads the format versions of each file (Bookmarks, sessions, preferences). A new Helium with the same formats syncs. A new format pauses only that one item (for example tabs), not everything.
 - Live sync through the helper extension uses Helium's own extension API, which does not change between Helium versions. It keeps working.
@@ -49,8 +49,9 @@ Today `internal/helium/version.go` lists one tested Helium version. Any other ve
 
 | | Option | Cost | What the user sees |
 |---|---|---|---|
-| **Mac** | Apple Developer Program, Developer ID signing and notarization | USD 99 a year | Opens normally. **Recommended before a public release.** |
-| Mac | Not signed | Free | macOS blocks it; the user must go to System Settings → Privacy & Security → Open Anyway. Many people stop here. |
+| **Mac** | **No app download. A one-line install command** that fetches the program (built and checksummed by GitHub) and starts it in the background. macOS blocks unsigned apps that a *browser* downloaded (it marks them as "from the internet"); a file fetched by the command is not marked, so it runs. The Go build is signed for this Mac automatically ("ad-hoc"), which Apple silicon needs. **Owner decision (10 Nov 2026): no Apple fee.** | Free | One command in Terminal, shown in the README. No "Open Anyway" step. |
+| Mac | Apple Developer Program, signing and notarization | USD 99 a year | Not wanted (owner decision). |
+| Mac | A Homebrew formula in a "tap" repository | Free | For people who use Homebrew: `brew install`. A good second way, later. |
 | **Windows** | **SignPath Foundation** (free code signing for open-source projects; the signer shown is "SignPath Foundation") | Free | Opens normally after the reputation builds. **Recommended.** |
 | Windows | Azure Artifact Signing | USD 9.99 a month | For individuals only in the USA and Canada, so not for the owner (India) as an individual. |
 | Windows | Not signed | Free | "Windows protected your PC" → More info → Run anyway. |

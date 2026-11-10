@@ -1,0 +1,60 @@
+# Runs the real-Helium tests on the newest Helium release, on Windows and
+# macOS. Helium updates often; this shows, the same day, whether Helium
+# Syncer still reads and writes its files correctly. Helium Syncer does not
+# wait for this to sync a new version (each file is checked before it is
+# written, see engine.Run); a failure here is the early warning to fix it.
+name: Newest Helium
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-helium:
+    name: Real Helium (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            repo: imputnet/helium-windows
+            asset: "*_x64-windows.zip"
+          - os: macos-latest
+            repo: imputnet/helium-macos
+            asset: "*_arm64-macos.dmg"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+      - name: Get the newest Helium
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/helium" && cd "$RUNNER_TEMP/helium"
+          tag=$(gh release view -R "${{ matrix.repo }}" --json tagName -q .tagName)
+          gh release download "$tag" -R "${{ matrix.repo }}" -p "${{ matrix.asset }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            unzip -q ./*.zip
+            exe=$(find "$PWD" -name chrome.exe | head -1)
+          else
+            hdiutil attach -nobrowse -quiet -mountpoint "$RUNNER_TEMP/dmg" ./*.dmg
+            cp -R "$RUNNER_TEMP/dmg/Helium.app" "$RUNNER_TEMP/helium/"
+            hdiutil detach -quiet "$RUNNER_TEMP/dmg"
+            exe="$RUNNER_TEMP/helium/Helium.app/Contents/MacOS/Helium"
+          fi
+          test -x "$exe" || test -f "$exe"
+          echo "HELIUM_EXE=$exe" >> "$GITHUB_ENV"
+          echo "Helium $tag" >> "$GITHUB_STEP_SUMMARY"
+      - name: Real-Helium tests
+        shell: bash
+        run: go test -p 1 -count=1 -tags helium -timeout 30m ./internal/...
+      - name: Result
+        if: success()
+        shell: bash
+        run: echo "All real-Helium tests passed on this Helium." >> "$GITHUB_STEP_SUMMARY"
