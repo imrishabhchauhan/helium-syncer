@@ -21,6 +21,7 @@ import (
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/helium"
+	"github.com/imrishabhchauhan/helium-syncer/internal/live"
 	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 )
 
@@ -95,9 +96,57 @@ type Agent struct {
 	Power func() power.State
 	// Mode is the battery mode (BatteryBalanced when nil or empty).
 	Mode func() string
+	// Live is the companion extension's end of things. Bookmarks sync
+	// through it while Helium is open; everything else still waits for
+	// Helium to quit, because only the browser can change itself safely.
+	Live *live.Server
+	// SyncLive syncs bookmarks only, through the open browser; replaceable
+	// in tests. Nil means live syncing is off.
+	SyncLive func(ctx context.Context) (engine.Report, error)
 
-	pw     power.State
-	pwRead time.Time
+	pw        power.State
+	pwRead    time.Time
+	liveMu    sync.Mutex
+	liveDirty bool
+}
+
+// ExtensionID is the companion extension's fixed id. The manifest pins it
+// with a public key, so it is the same on every computer, and the agent
+// accepts a connection from this origin and no other.
+const ExtensionID = "mhealbgfgbmpmodihicdniadpbkdbkkl"
+
+// liveReason marks the one sync that may run while Helium is open.
+const liveReason = "live bookmarks"
+
+// Wake asks for a sync as soon as the loop can (it never blocks).
+func (a *Agent) Wake() {
+	select {
+	case a.Trigger <- struct{}{}:
+	default:
+	}
+}
+
+// markLive records that a connected browser changed its bookmarks.
+func (a *Agent) markLive() {
+	a.liveMu.Lock()
+	a.liveDirty = true
+	a.liveMu.Unlock()
+	a.Wake()
+}
+
+// takeLive reports whether a live bookmark sync is owed, and clears the mark
+// so an unchanged browser is never synced again and again.
+func (a *Agent) takeLive() bool {
+	if a.SyncLive == nil {
+		return false
+	}
+	a.liveMu.Lock()
+	defer a.liveMu.Unlock()
+	if !a.liveDirty {
+		return false
+	}
+	a.liveDirty = false
+	return true
 }
 
 // New builds the real agent for the saved config.
@@ -117,6 +166,9 @@ func New() (*Agent, error) {
 	a.Running = func() (bool, error) { return helium.IsRunning(cfg.UserData) }
 	a.Power = power.Read
 	a.Mode = configMode()
+	a.Live = live.New(cfg.UserData)
+	a.Live.AllowOrigin = live.OriginOf(ExtensionID)
+	a.Live.Changed = func(string) { a.markLive() }
 	a.Sync = func(ctx context.Context) (engine.Report, error) {
 		c, err := app.Load() // pick up changes made from the command line
 		if err != nil {
@@ -130,7 +182,14 @@ func New() (*Agent, error) {
 		if err != nil {
 			return engine.Report{}, err
 		}
+		ec.Live = a.Live
 		rep, err := runLow(ctx, ec)
+		// Helium has quit and written its file, so any bookmark made while
+		// it was open now has Chromium's own id in there. Swap ours for it,
+		// or the same bookmark would be counted twice.
+		for _, p := range a.Live.Profiles() {
+			a.Live.Reconcile(p)
+		}
 		// Load again: settings may have changed while the sync ran.
 		if c, lerr := app.Load(); lerr == nil {
 			if err == nil && rep.Paused == "" {
@@ -141,6 +200,34 @@ func New() (*Agent, error) {
 			c.Save()
 		}
 		return rep, err
+	}
+	// Bookmarks only, through the open browser. Everything else keeps its
+	// own rule: Helium's files are not touched while it runs.
+	a.SyncLive = func(ctx context.Context) (engine.Report, error) {
+		c, err := app.Load()
+		if err != nil {
+			return engine.Report{}, err
+		}
+		if !c.Connected() || !c.SetupDone {
+			return engine.Report{}, ErrNotSetUp
+		}
+		ec, err := c.EngineConfig()
+		if err != nil {
+			return engine.Report{}, err
+		}
+		if ec.Off[engine.KindBookmarks] {
+			return engine.Report{}, nil // the person turned bookmarks off
+		}
+		ec.Live = a.Live
+		off := map[string]bool{}
+		for _, k := range engine.Kinds {
+			off[k] = k != engine.KindBookmarks
+		}
+		ec.Off = off
+		// Helium is open on purpose here, so the engine's "stop if Helium
+		// opened" guard must not fire: nothing below writes a Helium file.
+		ec.Running = func(string) (bool, error) { return false, nil }
+		return runLow(ctx, ec)
 	}
 	return a, nil
 }
@@ -183,10 +270,23 @@ func Lock() (net.Listener, error) {
 }
 
 // ServeShow answers "show your window" and "quit" from another copy of the
-// app, on the lock port. Websites cannot send the custom header without a
-// CORS preflight, which is refused, so they cannot trigger either.
+// app, on the lock port.
 func ServeShow(l net.Listener, show, quit func()) error {
+	return Serve(l, show, quit, nil)
+}
+
+// Serve answers "show your window" and "quit" from another copy of the app,
+// and, when liveHandler is given, the companion extension's connection on
+// live.Path. Websites cannot send the custom header without a CORS
+// preflight, which is refused, so they cannot trigger show or quit; the
+// extension's connection is gated on its Origin instead, which the browser
+// sets itself and a page cannot forge.
+func Serve(l net.Listener, show, quit func(), liveHandler http.Handler) error {
 	srv := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if liveHandler != nil && r.URL.Path == live.Path {
+			liveHandler.ServeHTTP(w, r)
+			return
+		}
 		what := r.Header.Get("X-Helium-Syncer")
 		if r.Method != http.MethodPost || r.Host != LockAddr || r.URL.Path != "/"+what || (what != "show" && what != "quit") {
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -293,7 +393,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		due, reason, note := false, "", ""
 		switch {
 		case open:
-			// Never touch anything while Helium is open.
+			// Helium's files are its own while it runs. Bookmarks are the
+			// one thing that can still sync, because the extension asks the
+			// browser to make the change instead of writing the file.
+			if a.takeLive() {
+				due, reason = true, liveReason
+			}
 		case wasOpen:
 			quitAt, pendingQuit = now, true
 		case pendingQuit && now.Sub(quitAt) >= t.AfterQuit:
@@ -371,7 +476,11 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	a.Status.mu.Lock()
 	a.Status.Syncing = true
 	a.Status.mu.Unlock()
-	rep, err := a.Sync(ctx)
+	sync := a.Sync
+	if reason == liveReason && a.SyncLive != nil {
+		sync = a.SyncLive
+	}
+	rep, err := sync(ctx)
 	a.Status.mu.Lock()
 	defer a.Status.mu.Unlock()
 	a.Status.Syncing = false

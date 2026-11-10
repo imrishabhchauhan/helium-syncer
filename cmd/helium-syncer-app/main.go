@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -68,7 +69,20 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if lock != nil {
-		go agent.ServeShow(lock, open, tray.Quit)
+		// The companion extension connects here too, so bookmarks sync
+		// while Helium is open. The agent that does the syncing is made
+		// later by keepAgent, so look it up per connection rather than
+		// binding one now: a handler from a different agent would accept
+		// the browser and then sync nothing.
+		live := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a := s.Agent()
+			if a == nil || a.Live == nil {
+				http.Error(w, "the background sync is not running yet", http.StatusServiceUnavailable)
+				return
+			}
+			a.Live.Handler().ServeHTTP(w, r)
+		})
+		go agent.Serve(lock, open, tray.Quit, live)
 		go keepAgent(ctx, s, logger)
 	}
 	if !background {
