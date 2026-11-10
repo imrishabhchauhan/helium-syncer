@@ -296,3 +296,45 @@ func TestPluggedModeWaitsForPower(t *testing.T) {
 		}
 	}
 }
+
+// While Helium is open and the extension is connected, the agent must keep
+// asking for the other computer's bookmark changes, even when nothing changed
+// here; otherwise a bookmark made on the other computer only appears after
+// this browser happens to change one. Without the extension it stays quiet.
+func TestLiveCheckWhileOpen(t *testing.T) {
+	for _, connected := range []bool{true, false} {
+		f := &fake{open: true}
+		a := newTestAgent(f)
+		a.Timing.LivePull = 40 * time.Millisecond
+		var mu sync.Mutex
+		live := 0
+		a.SyncLive = func(context.Context) (engine.Report, error) {
+			mu.Lock()
+			live++
+			mu.Unlock()
+			return engine.Report{}, nil
+		}
+		a.LiveConnected = func() bool { return connected }
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { a.Run(ctx); close(done) }()
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+		<-done
+		mu.Lock()
+		n := live
+		mu.Unlock()
+		f.mu.Lock()
+		full := len(f.syncs)
+		f.mu.Unlock()
+		if full != 0 {
+			t.Fatalf("connected=%v: a full sync ran while Helium was open", connected)
+		}
+		if connected && n < 3 {
+			t.Errorf("connected: %d live check(s) in 300 ms at 40 ms apart, want several", n)
+		}
+		if !connected && n != 0 {
+			t.Errorf("no extension: %d live check(s), want none", n)
+		}
+	}
+}

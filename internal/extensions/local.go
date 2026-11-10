@@ -114,7 +114,9 @@ func RemoveLocal(profile, id, deviceID string) error {
 	}, "extensions.settings."+id)
 }
 
-// LocalInstalled reports whether this profile already points at this folder.
+// LocalInstalled reports whether this profile points at this folder and
+// Helium will run it: registered from a folder, nothing switching it off, and
+// developer mode on.
 func LocalInstalled(profile, id, dir, goos string) bool {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -124,19 +126,15 @@ func LocalInstalled(profile, id, dir, goos string) bool {
 	if err != nil {
 		return false
 	}
-	exts, _ := doc["extensions"].(map[string]any)
-	if exts == nil {
-		return false
-	}
-	settings, _ := exts["settings"].(map[string]any)
-	if settings == nil {
-		return false
-	}
-	e, _ := settings[id].(map[string]any)
+	e, _ := chromejson.Lookup(doc, "extensions.settings."+id).(map[string]any)
 	if e == nil {
 		return false
 	}
-	return str(e["path"]) == pathFor(abs, goos)
+	reasons, _ := e["disable_reasons"].([]any)
+	return str(e["path"]) == pathFor(abs, goos) &&
+		intOf(e["location"]) == LocationUnpacked &&
+		len(reasons) == 0 &&
+		chromejson.Lookup(doc, DeveloperModePath) == true
 }
 
 func pathFor(abs, goos string) string {

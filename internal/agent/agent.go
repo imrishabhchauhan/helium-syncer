@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -32,13 +33,23 @@ type Timing struct {
 	AfterQuit          time.Duration // wait after Helium quits (it flushes files)
 	WhileClosed        time.Duration // pull interval while Helium is closed (plugged in)
 	WhileClosedBattery time.Duration // the same on battery
-	MaxBackoff         time.Duration
+	// LivePull is how often, while Helium is open and the companion
+	// extension is connected, the agent asks the server for bookmark changes
+	// from the other computer. The server cannot push, so this is the delay
+	// before a bookmark made there appears here. Zero turns it off.
+	LivePull        time.Duration
+	LivePullBattery time.Duration // the same on battery
+	MaxBackoff      time.Duration
 }
 
 // DefaultTiming is used by the real agent. A check is one cheap file test;
 // a pull is one small download when nothing changed.
 var DefaultTiming = Timing{Poll: 5 * time.Second, PollBattery: 15 * time.Second, AfterQuit: 4 * time.Second,
-	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute, MaxBackoff: 30 * time.Minute}
+	WhileClosed: 5 * time.Minute, WhileClosedBattery: 30 * time.Minute,
+	// About 4,300 small requests a day per computer if Helium stays open
+	// all day, inside the server's free daily allowance.
+	LivePull: 20 * time.Second, LivePullBattery: 2 * time.Minute,
+	MaxBackoff: 30 * time.Minute}
 
 // Battery modes (app.Config.Battery).
 const (
@@ -103,6 +114,9 @@ type Agent struct {
 	// SyncLive syncs bookmarks only, through the open browser; replaceable
 	// in tests. Nil means live syncing is off.
 	SyncLive func(ctx context.Context) (engine.Report, error)
+	// LiveConnected reports whether any browser has the companion extension
+	// connected; replaceable in tests.
+	LiveConnected func() bool
 
 	pw        power.State
 	pwRead    time.Time
@@ -117,6 +131,10 @@ const ExtensionID = "mhealbgfgbmpmodihicdniadpbkdbkkl"
 
 // liveReason marks the one sync that may run while Helium is open.
 const liveReason = "live bookmarks"
+
+// liveCheckReason is the regular ask for the other computer's bookmark
+// changes while Helium is open. It runs the same bookmarks-only sync.
+const liveCheckReason = "live check"
 
 // Wake asks for a sync as soon as the loop can (it never blocks).
 func (a *Agent) Wake() {
@@ -169,6 +187,7 @@ func New() (*Agent, error) {
 	a.Live = live.New(cfg.UserData)
 	a.Live.AllowOrigin = live.OriginOf(ExtensionID)
 	a.Live.Changed = func(string) { a.markLive() }
+	a.LiveConnected = func() bool { return len(a.Live.Profiles()) > 0 }
 	a.Sync = func(ctx context.Context) (engine.Report, error) {
 		c, err := app.Load() // pick up changes made from the command line
 		if err != nil {
@@ -189,6 +208,11 @@ func New() (*Agent, error) {
 		// or the same bookmark would be counted twice.
 		for _, p := range a.Live.Profiles() {
 			a.Live.Reconcile(p)
+		}
+		// Helium is closed and its files are settled: the one moment the
+		// companion extension can be added to a profile.
+		if err == nil && !ec.Off[engine.KindBookmarks] {
+			a.ensureCompanion(ec)
 		}
 		// Load again: settings may have changed while the sync ran.
 		if c, lerr := app.Load(); lerr == nil {
@@ -230,6 +254,34 @@ func New() (*Agent, error) {
 		return runLow(ctx, ec)
 	}
 	return a, nil
+}
+
+// ensureCompanion installs the companion extension in every synced profile
+// that lacks it. A failure is logged and never fails the sync: without the
+// extension everything still syncs when Helium quits, as before.
+func (a *Agent) ensureCompanion(ec engine.Config) {
+	links, err := engine.Links(ec.StateDir, ec.DeviceID)
+	if err != nil {
+		a.logf("companion extension: cannot list synced profiles: %v", err)
+		return
+	}
+	var dirs []string
+	for d := range links {
+		dirs = append(dirs, filepath.Join(ec.UserData, d))
+	}
+	c := Companion{
+		Dir:       filepath.Join(app.Dir(), "extension"),
+		MachineID: ec.MachineID,
+		GOOS:      runtime.GOOS,
+		Running:   func() (bool, error) { return helium.IsRunning(ec.UserData) },
+	}
+	done, err := c.Ensure(dirs)
+	for _, p := range done {
+		a.logf("companion extension installed in %s; bookmarks sync live from the next start", filepath.Base(p))
+	}
+	if err != nil {
+		a.logf("companion extension: %v", err)
+	}
 }
 
 // runLow runs a sync at low priority, so the computer stays quiet and cool.
@@ -369,6 +421,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	pendingQuit := false // Helium quit and its changes are not sent yet
 	quitAt := time.Time{}
 	var lastAttempt time.Time
+	var lastLive time.Time // last bookmarks-only sync while Helium was open
 	backoff := time.Duration(0)
 	first := true
 	timer := time.NewTimer(time.Hour)
@@ -398,6 +451,13 @@ func (a *Agent) Run(ctx context.Context) error {
 			// browser to make the change instead of writing the file.
 			if a.takeLive() {
 				due, reason = true, liveReason
+			} else if every := t.LivePull; every > 0 && !pluggedOnly && a.LiveConnected != nil && a.LiveConnected() {
+				if pw.OnBattery {
+					every = or(t.LivePullBattery, every)
+				}
+				if now.Sub(lastLive) >= every+backoff {
+					due, reason = true, liveCheckReason
+				}
 			}
 		case wasOpen:
 			quitAt, pendingQuit = now, true
@@ -436,6 +496,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		wasOpen, first = open, false
 		if due {
 			lastAttempt = now
+			if reason == liveReason || reason == liveCheckReason {
+				lastLive = now
+			}
 			if reason == "Helium quit" || reason == "requested" {
 				pendingQuit = false
 			}
@@ -477,7 +540,7 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	a.Status.Syncing = true
 	a.Status.mu.Unlock()
 	sync := a.Sync
-	if reason == liveReason && a.SyncLive != nil {
+	if (reason == liveReason || reason == liveCheckReason) && a.SyncLive != nil {
 		sync = a.SyncLive
 	}
 	rep, err := sync(ctx)
@@ -503,7 +566,7 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 		return nil
 	}
 	a.Status.LastSync, a.Status.LastReport, a.Status.LastError, a.Status.Paused = a.Now(), rep, "", ""
-	if rep.Sent+rep.Received > 0 || reason != "periodic" {
+	if rep.Sent+rep.Received > 0 || (reason != "periodic" && reason != liveCheckReason) {
 		a.logf("%s: sent %d, received %d, wrote %v, took %s", reason, rep.Sent, rep.Received, rep.Written, tookLine(rep.Took))
 	}
 	return nil
