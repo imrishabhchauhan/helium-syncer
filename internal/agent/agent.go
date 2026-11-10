@@ -62,7 +62,7 @@ var DefaultTiming = Timing{Poll: 5 * time.Second, PollBattery: 15 * time.Second,
 	// one small check every 5 minutes, and at most one sync in 5 minutes.
 	LivePull: 5 * time.Second, LivePullBattery: 5 * time.Minute, LivePullWatching: 5 * time.Minute,
 	LiveBatchBattery: 5 * time.Minute,
-	MaxBackoff: 30 * time.Minute}
+	MaxBackoff:       30 * time.Minute}
 
 // Battery modes (app.Config.Battery).
 const (
