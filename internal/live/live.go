@@ -41,6 +41,13 @@ import (
 // Path is where the extension connects on the agent's local port.
 const Path = "/live"
 
+// MaxMessageBytes is the biggest message the app accepts from the extension.
+// The whole bookmark tree comes in one message: about 150 bytes a bookmark,
+// so 500 bookmarks is already 75 KB, well past the WebSocket library's 32 KB
+// default. 64 MB covers several hundred thousand bookmarks; the connection
+// only ever comes from this computer, from the extension the app trusts.
+const MaxMessageBytes = 64 << 20
+
 // Protocol version; the extension sends it in hello and an older or newer
 // one is refused rather than guessed at.
 const Version = 1
@@ -162,6 +169,7 @@ func (s *Server) Handler() http.Handler {
 		if err != nil {
 			return
 		}
+		ws.SetReadLimit(MaxMessageBytes)
 		s.serve(r.Context(), ws)
 	})
 }
