@@ -328,3 +328,37 @@ func TestAReceivedBookmarkKeepsItsKey(t *testing.T) { receivedBookmark(t, false)
 // An extension older than the "created" answer: the app must still know the
 // bookmark it asked for when it appears.
 func TestAReceivedBookmarkKeepsItsKeyWithAnOlderExtension(t *testing.T) { receivedBookmark(t, true) }
+
+// A remembered bookmark without a synced date yet (made by an older app)
+// must take the synced date as soon as the app writes the tree, even when
+// nothing else differs and nothing is sent.
+func TestSyncedDateIsTakenWhenNothingElseChanges(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	s := New(userData)
+	nodes := append(browserNodes(), Node{ID: "500", ParentID: "1", Index: 2, Title: "From the Mac", URL: "https://mac.example/", DateAdded: 1794310000123})
+	connect(s, dir, nodes)
+	const key = "dddddddd-0000-4000-8000-00000000000a"
+	s.mu.Lock()
+	s.remember(dir, "500", bookmarkKey{GUID: key, URL: "https://mac.example/", Title: "From the Mac"})
+	s.mu.Unlock()
+	f, _ := s.ReadBookmarks(dir) // reads the browser's own date
+	// The sync holds an older date for it.
+	walkFile(f, func(n map[string]any, _, guid string) {
+		if guid == key {
+			n["date_added"] = "13300000000000000"
+		}
+	})
+	s.mu.Lock()
+	c := s.conns[dir]
+	c.ws = nil // nothing may be sent: the shape is the same
+	s.mu.Unlock()
+	if err := s.WriteBookmarks(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	again, _ := s.ReadBookmarks(dir)
+	walkFile(again, func(n map[string]any, _, guid string) {
+		if guid == key && str(n["date_added"]) != "13300000000000000" {
+			t.Errorf("date %s, want the synced 13300000000000000", str(n["date_added"]))
+		}
+	})
+}

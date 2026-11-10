@@ -747,6 +747,24 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 		out = append(out, Node{ID: id, Title: rootName(name), Folder: true, FolderType: folderType(name)})
 		visit(id, n)
 	}
+	// A bookmark the extension made earlier keeps the synced date: the
+	// browser cannot take it. Recorded also when nothing else changes,
+	// which is exactly when the two dates would otherwise go back and forth.
+	s.mu.Lock()
+	s.loadKeys()
+	saved := false
+	for id, k := range s.keys[profileDir] {
+		if d := dates[k.GUID]; d != "" && d != k.Date {
+			k.Date = d
+			s.keys[profileDir][id] = k
+			ids.wanted[id] = d
+			saved = true
+		}
+	}
+	if saved {
+		s.saveKeys()
+	}
+	s.mu.Unlock()
 	// Nothing to change: say nothing. Sending anyway makes the extension
 	// apply it and report its tree back, which starts another sync, and so
 	// on for ever (seen on the Mac: a sync every second).
@@ -762,16 +780,6 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 	}
 	s.mu.Lock()
 	c.pending, c.pendingDate = pending, pendingDate
-	// A bookmark the extension made earlier keeps the synced date too.
-	s.loadKeys()
-	for id, k := range s.keys[profileDir] {
-		if d := dates[k.GUID]; d != "" && d != k.Date {
-			k.Date = d
-			s.keys[profileDir][id] = k
-			ids.wanted[id] = d
-		}
-	}
-	s.saveKeys()
 	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
