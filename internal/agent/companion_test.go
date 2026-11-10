@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,5 +68,47 @@ func TestCompanionStopsWhenHeliumOpens(t *testing.T) {
 	}
 	if extensions.LocalInstalled(dirs[1], ExtensionID, c.Dir, c.GOOS) {
 		t.Error("wrote to a profile while Helium was open")
+	}
+}
+
+// Helium keeps running a cached background script after the file changes, so
+// each version's script must have its own name, and the manifest must point
+// at it. Older scripts are removed.
+func TestCompanionScriptIsNamedForItsVersion(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "extension")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, "background.js"), []byte("old"), 0o600)
+	os.WriteFile(filepath.Join(dir, "background-0.0.9.js"), []byte("older"), 0o600)
+	c := Companion{Dir: dir, MachineID: "TEST", GOOS: runtime.GOOS, Running: func() (bool, error) { return false, nil }}
+	if err := c.WriteFiles(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m struct {
+		Version    string `json:"version"`
+		Key        string `json:"key"`
+		Background struct {
+			ServiceWorker string `json:"service_worker"`
+		} `json:"background"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	want := "background-" + m.Version + ".js"
+	if m.Background.ServiceWorker != want {
+		t.Fatalf("manifest service_worker %q, want %q", m.Background.ServiceWorker, want)
+	}
+	if m.Key == "" {
+		t.Error("the manifest lost its key, so the extension id would change")
+	}
+	if _, err := os.Stat(filepath.Join(dir, want)); err != nil {
+		t.Errorf("%s was not written", want)
+	}
+	left, _ := filepath.Glob(filepath.Join(dir, "background*.js"))
+	if len(left) != 1 {
+		t.Errorf("scripts left: %v, want only %s", left, want)
 	}
 }
