@@ -208,10 +208,13 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 				continue
 			}
 			s.mu.Lock()
+			// The same tree again (the extension reports after it applied
+			// what we sent) is no change, and must not start a sync.
+			changed := !c.seen || !sameShape(c.nodes, m.Nodes)
 			c.profile, c.nodes, c.seen = profile, m.Nodes, true
 			s.conns[profile] = c
 			s.mu.Unlock()
-			if s.Changed != nil {
+			if changed && s.Changed != nil {
 				s.Changed(profile)
 			}
 		case "pong":
@@ -531,9 +534,51 @@ func (s *Server) WriteBookmarks(profileDir string, f *bookmarks.File) error {
 		out = append(out, Node{ID: id, Title: rootName(name), Folder: true, FolderType: folderType(name)})
 		visit(id, n)
 	}
+	// Nothing to change: say nothing. Sending anyway makes the extension
+	// apply it and report its tree back, which starts another sync, and so
+	// on for ever (seen on the Mac: a sync every second).
+	if sameShape(out, c.nodes) {
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return wsjson.Write(ctx, c.ws, Msg{Type: "apply", Profile: profileDir, Nodes: out})
+}
+
+// place is where a bookmark sits and what it shows.
+type place struct {
+	parent, title, url string
+	index              int
+	folder             bool
+}
+
+// shapeOf is what a tree looks like to a person: which bookmark is where,
+// with what title and address. Dates and the permanent folders' own entries
+// are left out; neither is something the extension changes.
+func shapeOf(nodes []Node) map[string]place {
+	m := make(map[string]place, len(nodes))
+	for _, n := range nodes {
+		if n.FolderType != "" {
+			continue
+		}
+		m[n.ID] = place{parent: n.ParentID, title: n.Title, url: n.URL, index: n.Index, folder: n.Folder}
+	}
+	return m
+}
+
+// sameShape reports whether two trees hold the same bookmarks in the same
+// places.
+func sameShape(a, b []Node) bool {
+	sa, sb := shapeOf(a), shapeOf(b)
+	if len(sa) != len(sb) {
+		return false
+	}
+	for id, p := range sa {
+		if q, ok := sb[id]; !ok || q != p {
+			return false
+		}
+	}
+	return true
 }
 
 func folderType(root string) string {

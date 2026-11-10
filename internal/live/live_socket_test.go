@@ -98,3 +98,67 @@ func TestDatesKeepTheFilesPrecision(t *testing.T) {
 		t.Errorf("Kenney date_added %s, want the browser's 13300000000005000 (a real change)", got["Kenney"])
 	}
 }
+
+// After the app sends a tree, the extension applies it and reports its tree
+// back. If an unchanged report counted as a change, or the app sent a tree
+// the browser already has, the two would start each other for ever (seen on
+// the Mac: a sync every second).
+func TestNoEndlessLoopBetweenAppAndBrowser(t *testing.T) {
+	userData, dir := profileWithFile(t, fileJSON)
+	const ext = "abcdefghijklmnopabcdefghijklmnop"
+	s := New(userData)
+	s.AllowOrigin = OriginOf(ext)
+	changed := make(chan string, 10)
+	s.Changed = func(p string) { changed <- p }
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ws, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srv.URL, "http")+Path, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Origin": {"chrome-extension://" + ext}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.CloseNow()
+	wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+	var hello Msg
+	wsjson.Read(ctx, ws, &hello)
+
+	send := func(nodes []Node) { wsjson.Write(ctx, ws, Msg{Type: "tree", Version: Version, Nodes: nodes}) }
+	got := func() int {
+		time.Sleep(150 * time.Millisecond)
+		return len(changed)
+	}
+	send(browserNodes())
+	if n := got(); n != 1 {
+		t.Fatalf("first tree: %d change(s), want 1", n)
+	}
+	<-changed
+	send(browserNodes()) // the same tree again, as after an apply
+	if n := got(); n != 0 {
+		t.Fatalf("an unchanged tree counted as %d change(s)", n)
+	}
+	moved := browserNodes()
+	moved[2].Title = "SVGL renamed"
+	send(moved)
+	if n := got(); n != 1 {
+		t.Fatalf("a renamed bookmark: %d change(s), want 1", n)
+	}
+	<-changed
+
+	// The app writes back what the browser already has: nothing is sent.
+	f, ok := s.ReadBookmarks(dir)
+	if !ok {
+		t.Fatal("not connected")
+	}
+	if err := s.WriteBookmarks(dir, f); err != nil {
+		t.Fatal(err)
+	}
+	rctx, rcancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer rcancel()
+	var m Msg
+	if err := wsjson.Read(rctx, ws, &m); err == nil {
+		t.Fatalf("the app sent %q for a tree the browser already has", m.Type)
+	}
+}
