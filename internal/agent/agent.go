@@ -143,6 +143,11 @@ type Agent struct {
 	// connection ends. Nil means the agent asks at intervals (LivePull).
 	Watch func(ctx context.Context, news func()) error
 
+	// SaveSync writes the time of a good sync into the saved settings.
+	// New() sets it; a test leaves it nil, so no test reaches the real
+	// settings file of the person running it.
+	SaveSync func(at time.Time)
+
 	pw           power.State
 	pwRead       time.Time
 	liveMu       sync.Mutex
@@ -170,16 +175,14 @@ func isLive(reason string) bool {
 // Writing on every live sync would touch the disk every few seconds, so it
 // writes at most once a minute.
 func (a *Agent) rememberSync(now time.Time) {
+	if a.SaveSync == nil {
+		return
+	}
 	if !a.savedAt.IsZero() && now.Sub(a.savedAt) < time.Minute {
 		return
 	}
 	a.savedAt = now
-	c, err := app.Load()
-	if err != nil {
-		return
-	}
-	c.LastSync, c.LastError = now, ""
-	c.Save()
+	a.SaveSync(now)
 }
 
 // markNews records that the server said there is news.
@@ -346,6 +349,14 @@ func New() (*Agent, error) {
 			c.Save()
 		}
 		return rep, err
+	}
+	a.SaveSync = func(at time.Time) {
+		c, err := app.Load()
+		if err != nil {
+			return
+		}
+		c.LastSync, c.LastError = at, ""
+		c.Save()
 	}
 	// Bookmarks and open tabs only, through the open browser. Everything
 	// else keeps its own rule: Helium's files are not touched while it runs.
@@ -618,6 +629,12 @@ func (a *Agent) Run(ctx context.Context) error {
 		pw, mode := a.power(now), a.mode()
 		pluggedOnly := mode == BatteryPlugged && pw.OnBattery
 		lowPower := mode != BatteryAlways && pw.Low()
+		if a.Live != nil {
+			// On battery the extension may sleep between changes. It does
+			// nothing for us in between anyway: the sync below already
+			// waits minutes on battery.
+			a.Live.SetMode(pw.OnBattery && mode != BatteryAlways)
+		}
 		if open != wasOpen && !first {
 			if open {
 				a.logf("Helium opened; waiting until it quits")
@@ -804,6 +821,9 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	}
 	a.Status.LastSync, a.Status.LastReport, a.Status.LastError, a.Status.Paused = a.Now(), rep, "", ""
 	if isLive(reason) {
+		// This writes a small file, at most once a minute, while the status
+		// lock is held. The tray reads the status every second, so it can
+		// wait a millisecond once a minute.
 		a.rememberSync(a.Now())
 	}
 	if len(rep.Held) > 0 {

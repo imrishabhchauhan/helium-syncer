@@ -24,7 +24,19 @@ const STARTUP_MS = 20000;         // Helium may still be restoring its windows t
 const SETTLED_AFTER_MS = 3000;    // after a page loads, how long it may still move by itself
 const PING_EVERY_MS = 20000;      // keeps this worker awake (under the 30 s idle limit)
 const WAKE_ALARM = "helium-syncer-wake";
+// How often the alarm wakes this worker. On power it is the shortest
+// Chromium allows, so the link is never down for long. On battery it is
+// rare, because holding this worker awake on a laptop costs power and buys
+// nothing: the app already waits minutes between syncs on battery, and the
+// browser wakes this worker by itself the moment a bookmark or a tab
+// changes.
+const WAKE_EVERY_PLUGGED = 0.5;   // minutes
+const WAKE_EVERY_BATTERY = 5;     // minutes
 
+// onBattery is what the app last said about this computer's power. It stays
+// false until the app says otherwise, so an older app, or none, behaves
+// exactly as before.
+let onBattery = false;
 let socket = null;
 let sendTimer = null;
 let tabsTimer = null;
@@ -71,6 +83,9 @@ async function currentTree() {
 
 function scheduleSend(why) {
   if (applying) return;           // our own changes; the app already has them
+  // On battery this worker may have been asleep, with no link open. The
+  // change itself woke it, so open the link again before trying to send.
+  connect();
   clearTimeout(sendTimer);
   sendTimer = setTimeout(() => sendTree(why), SEND_AFTER_MS);
 }
@@ -229,6 +244,7 @@ async function readTabs() {
 
 function scheduleTabs(why, after) {
   if (applyingTabs) return;       // our own changes; reported once at the end
+  connect();                      // may have been asleep on battery
   clearTimeout(tabsTimer);
   tabsTimer = setTimeout(() => sendTabs(why), after === undefined ? TABS_AFTER_MS : after);
 }
@@ -437,12 +453,7 @@ function connect() {
     sendTree("connected");
     // After the tree: the app learns which profile this is from the tree.
     scheduleTabs("connected");
-    clearInterval(pingTimer);
-    // Sending resets this worker's idle timer, which is what keeps it awake
-    // while nothing else is happening.
-    pingTimer = setInterval(() => {
-      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
-    }, PING_EVERY_MS);
+    applyPower();
   };
 
   socket.onmessage = async (event) => {
@@ -450,6 +461,11 @@ function connect() {
     try {
       msg = JSON.parse(event.data);
     } catch (e) {
+      return;
+    }
+    if (msg.type === "power") {
+      onBattery = msg.mode === "battery";
+      applyPower();
       return;
     }
     if (msg.type === "apply" && Array.isArray(msg.nodes)) {
@@ -475,6 +491,25 @@ function connect() {
   socket.onerror = () => {
     // onclose follows and handles it
   };
+}
+
+// applyPower decides whether this worker holds itself awake. On power it
+// sends a small message every 20 seconds, which resets the browser's idle
+// timer and keeps the link up, so a change from the other computer arrives
+// at once. On battery it stops, and lets the browser put this worker to
+// sleep; it comes back on the alarm, and at once when a bookmark or a tab
+// changes, because those wake it by themselves.
+function applyPower() {
+  clearInterval(pingTimer);
+  pingTimer = null;
+  if (!onBattery) {
+    pingTimer = setInterval(() => {
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "pong" }));
+    }, PING_EVERY_MS);
+  }
+  chrome.alarms.create(WAKE_ALARM, {
+    periodInMinutes: onBattery ? WAKE_EVERY_BATTERY : WAKE_EVERY_PLUGGED,
+  });
 }
 
 function retry() {
@@ -521,7 +556,7 @@ chrome.windows.onRemoved.addListener(() => scheduleTabs("window closed"));
 // This worker is stopped when nothing happens for 30 seconds, which would
 // drop the connection and leave changes from the other computer waiting. The
 // alarm wakes it, and 30 s is the shortest Chromium allows.
-chrome.alarms.create(WAKE_ALARM, { periodInMinutes: 0.5 });
+chrome.alarms.create(WAKE_ALARM, { periodInMinutes: WAKE_EVERY_PLUGGED });
 chrome.alarms.onAlarm.addListener((a) => {
   if (a.name === WAKE_ALARM) connect();
 });

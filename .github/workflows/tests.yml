@@ -35,6 +35,10 @@ jobs:
         run: test -z "$(gofmt -l internal cmd extension testing)" || (gofmt -l internal cmd extension testing; exit 1)
       - name: Vet
         run: go vet ./...
+      - name: The helper extension's script
+        # The script that runs inside Helium, checked without a browser.
+        if: runner.os == 'Linux'
+        run: node --test extension/background.test.mjs
       - name: Test (Linux)
         if: runner.os == 'Linux'
         # Temporary files in memory: the history tests write a database

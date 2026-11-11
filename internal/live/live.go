@@ -85,7 +85,17 @@ type Msg struct {
 	Tabs *TabsReport `json:"tabs,omitempty"`
 	// Apply is the tab changes to make ("applyTabs", from the app).
 	Apply *TabsApply `json:"apply,omitempty"`
+	// Mode tells the extension how this computer is powered ("power"):
+	// ModeBattery or ModePlugged. On battery the extension stops holding
+	// itself awake, so the browser can let it sleep.
+	Mode string `json:"mode,omitempty"`
 }
+
+// How this computer is powered, as told to the extension.
+const (
+	ModeBattery = "battery"
+	ModePlugged = "plugged"
+)
 
 // chromiumRoots maps the browser's folder types to the names the Bookmarks
 // file uses for its three roots.
@@ -144,6 +154,11 @@ type Server struct {
 	conns map[string]*conn                  // by profile directory
 	guid  map[string]idGUIDs                // by profile directory
 	keys  map[string]map[string]bookmarkKey // profile directory -> browser id -> key
+	mode  string                            // how this computer is powered
+	// open is every connected browser, including one that has not said
+	// which profile it is yet. conns holds only the matched ones, and a
+	// message meant for every browser must reach the others too.
+	open map[*conn]bool
 }
 
 // bookmarkKey is the sync identity of a bookmark that exists in the open
@@ -280,7 +295,7 @@ type idGUIDs struct {
 
 // New makes a Server. UserData is Helium's folder.
 func New(userData string) *Server {
-	return &Server{UserData: userData, conns: map[string]*conn{}, guid: map[string]idGUIDs{}}
+	return &Server{UserData: userData, conns: map[string]*conn{}, guid: map[string]idGUIDs{}, open: map[*conn]bool{}}
 }
 
 // Connected reports whether a browser is connected for this profile.
@@ -307,6 +322,42 @@ func (s *Server) Profiles() []string {
 
 // Handler serves the WebSocket the extension connects to. Mount it at Path
 // on the agent's existing local listener.
+// SetMode tells every connected browser how this computer is powered. On
+// battery the extension stops holding itself awake every 20 seconds, so the
+// browser may let it sleep; it wakes by itself when the person changes a
+// bookmark or a tab, and on its own timer. Nothing is lost: on battery the
+// app already waits minutes between syncs, so an extension kept awake in
+// between bought nothing and cost power.
+func (s *Server) SetMode(onBattery bool) {
+	mode := ModePlugged
+	if onBattery {
+		mode = ModeBattery
+	}
+	s.mu.Lock()
+	if s.mode == mode {
+		s.mu.Unlock()
+		return
+	}
+	s.mode = mode
+	conns := make([]*conn, 0, len(s.open))
+	for c := range s.open {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = wsjson.Write(ctx, c.ws, Msg{Type: "power", Mode: mode})
+		cancel()
+	}
+}
+
+// Mode is how this computer is powered, as the extensions were last told.
+func (s *Server) Mode() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mode
+}
+
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -328,6 +379,12 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 	defer ws.CloseNow()
 	c := &conn{ws: ws, nonce: strings.ReplaceAll(uuid.NewString(), "-", "")[:12]}
+	s.mu.Lock()
+	if s.open == nil {
+		s.open = map[*conn]bool{}
+	}
+	s.open[c] = true
+	s.mu.Unlock()
 	for {
 		var m Msg
 		if err := wsjson.Read(ctx, ws, &m); err != nil {
@@ -343,6 +400,12 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 				return
 			}
 			_ = wsjson.Write(ctx, ws, Msg{Type: "hello", Version: Version})
+			s.mu.Lock()
+			mode := s.mode
+			s.mu.Unlock()
+			if mode != "" {
+				_ = wsjson.Write(ctx, ws, Msg{Type: "power", Mode: mode})
+			}
 		case "tree":
 			if len(m.Nodes) == 0 {
 				continue
@@ -419,6 +482,7 @@ func (s *Server) serve(ctx context.Context, ws *websocket.Conn) {
 func (s *Server) drop(c *conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.open, c)
 	if c.profile != "" && s.conns[c.profile] == c {
 		delete(s.conns, c.profile)
 	}

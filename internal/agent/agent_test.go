@@ -538,6 +538,12 @@ func TestALiveSyncUpdatesTheSavedStatus(t *testing.T) {
 
 	now := time.Date(2026, 11, 11, 7, 30, 0, 0, time.UTC)
 	a := &Agent{Status: &Status{}, Now: func() time.Time { return now }}
+	a.SaveSync = func(at time.Time) {
+		if c, err := app.Load(); err == nil {
+			c.LastSync, c.LastError = at, ""
+			c.Save()
+		}
+	}
 	a.SyncLive = func(context.Context) (engine.Report, error) { return engine.Report{}, nil }
 	a.Sync = a.SyncLive
 	if err := a.syncOnce(context.Background(), liveReason); err != nil {
