@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -45,11 +46,38 @@ type APIError struct {
 
 func (e *APIError) Error() string { return e.Message }
 
+// IdleFor is how long an unused connection is kept. Go's own default is
+// 90 seconds, which is shorter than the gap between syncs: on battery they
+// are five minutes apart, so every sync began with a fresh handshake.
+// Keeping the connection a little longer than that gap means the next sync
+// uses the one it already has - less processor, and less time with the
+// radio awake, which is what a laptop pays for.
+const IdleFor = 6 * time.Minute
+
+// DialFor is how long to wait for a connection. Go's own default is 30
+// seconds. On a network that drops packets the system retries a lost
+// connection by itself for about 16 seconds, which happened on 4% of the
+// owner's syncs and still worked, so this must stay well above that: it is
+// here only to stop the rare connection that hangs much longer.
+const DialFor = 25 * time.Second
+
+// shared is the connection pool every client uses.
+var shared = &http.Transport{
+	Proxy:                 nil,
+	DialContext:           (&net.Dialer{Timeout: DialFor, KeepAlive: 30 * time.Second}).DialContext,
+	MaxIdleConns:          8,
+	MaxIdleConnsPerHost:   4,
+	IdleConnTimeout:       IdleFor,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: time.Second,
+	ForceAttemptHTTP2:     true,
+}
+
 func (c *Client) http() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 60 * time.Second}
+	return &http.Client{Timeout: 60 * time.Second, Transport: shared}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) (int, error) {
