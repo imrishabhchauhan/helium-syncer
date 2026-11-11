@@ -116,7 +116,15 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 			if err != nil || h == "" {
 				return merge.ExtData{}, err
 			}
-			if d := ps.DataBlobs[id]; d.Hash == h || !upload {
+			if d := ps.DataBlobs[id]; d.Hash == h {
+				// The data on disk is the data already uploaded. Keep the
+				// mark, so the next sync does not read and compress it all
+				// over again. Without this line the mark was only ever
+				// kept when something changed, which is almost never, so
+				// the whole check did nothing.
+				ps.DataStamps[id] = stamp
+				return merge.ExtData{Hash: h, Blob: d.Blob}, nil
+			} else if !upload {
 				return merge.ExtData{Hash: h, Blob: d.Blob}, nil
 			}
 			b, err := blobs.PutBlob(ctx, data)
