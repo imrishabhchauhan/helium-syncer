@@ -159,6 +159,7 @@ type stateView struct {
 	DeviceName  string         `json:"deviceName"`
 	HeliumFound bool           `json:"heliumFound"`
 	HeliumOpen  bool           `json:"heliumOpen"`
+	Live        bool           `json:"live"` // the helper extension is connected
 	Version     string         `json:"version"`
 	Profiles    []profileView  `json:"profiles"`
 	LastSync    int64          `json:"lastSync"`
@@ -248,7 +249,7 @@ func (s *Server) state() (stateView, error) {
 	}
 	if ag := s.Agent(); ag != nil {
 		st := ag.Status.Snapshot()
-		v.Syncing, v.Paused, v.PowerNote = st.Syncing, st.Paused, st.PowerNote
+		v.Syncing, v.Paused, v.PowerNote, v.Live = st.Syncing, st.Paused, st.PowerNote, st.Live
 		if st.LastError != "" {
 			v.LastError = st.LastError
 		}

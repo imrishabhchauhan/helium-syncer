@@ -88,6 +88,7 @@ var ErrAlreadyRunning = errors.New("Helium Syncer is already running in the back
 type Status struct {
 	mu         sync.Mutex
 	HeliumOpen bool
+	Live       bool // a browser with the helper extension is connected
 	LastSync   time.Time
 	LastReport engine.Report
 	LastError  string
@@ -100,7 +101,7 @@ type Status struct {
 func (s *Status) Snapshot() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Status{HeliumOpen: s.HeliumOpen, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
+	return Status{HeliumOpen: s.HeliumOpen, Live: s.Live, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
 }
 
 // Agent runs the loop.
@@ -150,6 +151,7 @@ type Agent struct {
 	watching     bool               // Watch is connected
 	watchCancel  context.CancelFunc // stops the Watch loop; nil when not running
 	untestedSeen string             // the untested Helium version already logged
+	savedAt      time.Time          // when a live sync last wrote the settings
 }
 
 // liveNewsReason is the sync the server asked for: the other computer sent
@@ -159,6 +161,25 @@ const liveNewsReason = "live news"
 // isLive reports whether a sync reason is one that runs while Helium is open.
 func isLive(reason string) bool {
 	return reason == liveReason || reason == liveCheckReason || reason == liveNewsReason
+}
+
+// rememberSync writes the time of a good sync into the saved settings.
+// Only the sync that runs after Helium quits used to do this, so while
+// Helium stayed open (which can be days) the status line and a freshly
+// started tray kept showing an old time and a problem that was long over.
+// Writing on every live sync would touch the disk every few seconds, so it
+// writes at most once a minute.
+func (a *Agent) rememberSync(now time.Time) {
+	if !a.savedAt.IsZero() && now.Sub(a.savedAt) < time.Minute {
+		return
+	}
+	a.savedAt = now
+	c, err := app.Load()
+	if err != nil {
+		return
+	}
+	c.LastSync, c.LastError = now, ""
+	c.Save()
 }
 
 // markNews records that the server said there is news.
@@ -493,10 +514,17 @@ func Serve(l net.Listener, show, quit func(), liveHandler http.Handler) error {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		if what == "quit" && quit == nil {
+			// Say so rather than answer "done": a script or an update that
+			// must stop this copy before it replaces the program would
+			// otherwise carry on against a copy still running.
+			http.Error(w, "this copy cannot be asked to quit", http.StatusNotImplemented)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 		if what == "show" {
 			show()
-		} else if quit != nil {
+		} else {
 			go quit()
 		}
 	})}
@@ -639,8 +667,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		case pluggedOnly:
 			note = "On battery: syncs when you plug in."
 		case lowPower && !first:
-			// Low battery or saver mode: pull nothing now. The next quit of
-			// Helium still sends its changes.
+			// Low battery or saver mode: ask for nothing now. The next quit
+			// of Helium still sends its changes.
+			note = "Battery is low: syncs when you plug in."
+			// A sync that failed is the one exception. Without this, a
+			// computer whose last sync failed went quiet until the battery
+			// was charged: on 10 Nov 2026 the owner's Mac said nothing for
+			// eight hours while its changes sat unsent.
+			if backoff > 0 && now.Sub(lastAttempt) >= t.WhileClosed+backoff {
+				due, reason = true, "retry"
+			}
 		default:
 			interval := t.WhileClosed
 			if pw.OnBattery && mode == BatteryBalanced {
@@ -657,8 +693,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		default:
 		}
+		live := a.LiveConnected != nil && a.LiveConnected()
 		a.Status.mu.Lock()
-		a.Status.HeliumOpen, a.Status.PowerNote = open, note
+		a.Status.HeliumOpen, a.Status.PowerNote, a.Status.Live = open, note, live
 		a.Status.mu.Unlock()
 		wasOpen, first = open, false
 		if due {
@@ -745,6 +782,9 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 		return nil
 	}
 	a.Status.LastSync, a.Status.LastReport, a.Status.LastError, a.Status.Paused = a.Now(), rep, "", ""
+	if isLive(reason) {
+		a.rememberSync(a.Now())
+	}
 	if len(rep.Held) > 0 {
 		// Shown in the app and the tray: the person sees why an item waits.
 		a.Status.Paused = "Waiting for a Helium Syncer update: " + strings.Join(rep.Held, ", ") +

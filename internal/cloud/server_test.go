@@ -232,3 +232,54 @@ func TestServerJoinAbuse(t *testing.T) {
 		t.Fatalf("a made-up token must be refused, got %v", err)
 	}
 }
+
+// "Last seen" is written at most once an hour, not on every request. It is
+// only shown in the list of computers, but it used to be a database write
+// before every single call, and on 10 Nov 2026 a hiccup in that one write
+// stopped everything, reads included, on both computers for hours.
+func TestServerLastSeenIsNotWrittenOnEveryRequest(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	base := startServer(t)
+	code := newCode(t)
+
+	one := &Client{Base: base}
+	if _, err := one.Join(ctx, code, "Mac", "macos", true); err != nil {
+		t.Fatal(err)
+	}
+	two := &Client{Base: base}
+	if _, err := two.Join(ctx, code, "Windows PC", "windows", false); err != nil {
+		t.Fatal(err)
+	}
+
+	seen := func() int64 {
+		devs, me, err := one.Devices(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range devs {
+			if d.ID == me {
+				return d.LastSeen
+			}
+		}
+		t.Fatal("this device is not in the list")
+		return 0
+	}
+	before := seen()
+	if before == 0 {
+		t.Fatal("joining did not record a first 'last seen'")
+	}
+	// Plenty of ordinary work, the kind a browser-open minute makes.
+	for i := 0; i < 12; i++ {
+		if err := one.Push(ctx, []crdt.Op{{Type: "p1/bookmark", Key: fmt.Sprint("g", i),
+			Value: []byte(`{"n":"x","u":"https://x.example/"}`), Stamp: crdt.Stamp{Wall: int64(i + 1), Device: "mac"}}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := one.Pull(ctx, "0"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if after := seen(); after != before {
+		t.Errorf("'last seen' moved from %d to %d, so it is still written on every request", before, after)
+	}
+}

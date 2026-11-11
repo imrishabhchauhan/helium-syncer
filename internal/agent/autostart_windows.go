@@ -14,6 +14,32 @@ import (
 const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
 const runValue = "HeliumSyncer"
 
+// appExe is the window program. It has no console, so Windows shows nothing
+// when it starts.
+const appExe = "Helium Syncer.exe"
+
+// loginProgram picks what Windows should start at login, given the program
+// that is running now. The command-line program is a console program: if
+// Windows starts it, a black terminal window sits on the screen until the
+// computer is turned off. The window program is installed next to it and
+// does the same syncing, so start that instead when it is there.
+func loginProgram(exe string, exists func(string) bool) (string, []string) {
+	if strings.EqualFold(filepath.Base(exe), appExe) {
+		return exe, AutostartArgs
+	}
+	app := filepath.Join(filepath.Dir(exe), appExe)
+	if exists(app) {
+		return app, []string{"--background"}
+	}
+	return exe, AutostartArgs
+}
+
+// onDisk says whether a file is there.
+func onDisk(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
 // SetAutostart starts the agent at login (current user only) or stops that.
 func SetAutostart(on bool) error {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.SET_VALUE|registry.QUERY_VALUE)
@@ -31,7 +57,8 @@ func SetAutostart(on bool) error {
 	if err != nil {
 		return err
 	}
-	return k.SetStringValue(runValue, `"`+exe+`" `+strings.Join(AutostartArgs, " "))
+	exe, args := loginProgram(exe, onDisk)
+	return k.SetStringValue(runValue, `"`+exe+`" `+strings.Join(args, " "))
 }
 
 // Autostart reports whether start-at-login is on.
@@ -46,12 +73,15 @@ func Autostart() bool {
 }
 
 // StartDetached starts the agent in the background without a console window.
+// It starts the same program that start-at-login would, so what runs now and
+// what runs after the next log-in are the same thing.
 func StartDetached() error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(exe, AutostartArgs...)
+	exe, args := loginProgram(exe, onDisk)
+	cmd := exec.Command(exe, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008} // DETACHED_PROCESS
 	return cmd.Start()
 }

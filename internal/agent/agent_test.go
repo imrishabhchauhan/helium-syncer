@@ -2,11 +2,14 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
 	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 )
@@ -518,5 +521,113 @@ func TestBatteryBatchesLiveChanges(t *testing.T) {
 			t.Errorf("%s: server connection opened %d time(s), want open=%v", tc.name, watched, tc.watch)
 		}
 		mu.Unlock()
+	}
+}
+
+// While Helium is open only the live sync runs, and it used to leave the
+// saved settings untouched: the status line and a freshly started tray then
+// showed yesterday's time and a problem that was already over. A good live
+// sync must write the time and clear the problem.
+func TestALiveSyncUpdatesTheSavedStatus(t *testing.T) {
+	t.Setenv("HELIUM_SYNCER_HOME", t.TempDir())
+	old := &app.Config{LastError: "Something went wrong on the server. Please try again.",
+		LastSync: time.Date(2026, 11, 10, 18, 21, 0, 0, time.UTC)}
+	if err := old.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 11, 11, 7, 30, 0, 0, time.UTC)
+	a := &Agent{Status: &Status{}, Now: func() time.Time { return now }}
+	a.SyncLive = func(context.Context) (engine.Report, error) { return engine.Report{}, nil }
+	a.Sync = a.SyncLive
+	if err := a.syncOnce(context.Background(), liveReason); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := app.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastError != "" {
+		t.Errorf("the old problem is still saved: %q", got.LastError)
+	}
+	if !got.LastSync.Equal(now) {
+		t.Errorf("saved last sync is %v, want %v", got.LastSync, now)
+	}
+
+	// Not on every live sync: that would write to the disk every few
+	// seconds. A second one a moment later changes nothing.
+	later := now.Add(5 * time.Second)
+	a.Now = func() time.Time { return later }
+	if err := a.syncOnce(context.Background(), liveReason); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := app.Load(); !got.LastSync.Equal(now) {
+		t.Errorf("the settings were written again after %v, saved time is now %v", later.Sub(now), got.LastSync)
+	}
+
+	// A minute later it does write again.
+	much := now.Add(2 * time.Minute)
+	a.Now = func() time.Time { return much }
+	if err := a.syncOnce(context.Background(), liveReason); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := app.Load(); !got.LastSync.Equal(much) {
+		t.Errorf("after two minutes the saved time is %v, want %v", got.LastSync, much)
+	}
+}
+
+// A copy that cannot quit must say so. It used to answer "done" and keep
+// running, so "Helium Syncer --quit" in a script, or an update that has to
+// stop the background sync before replacing the program, carried on against
+// a copy that was still there.
+func TestQuitSaysSoWhenThisCopyCannotQuit(t *testing.T) {
+	l, err := Lock()
+	if err != nil {
+		t.Skip("lock port busy on this machine:", err)
+	}
+	defer l.Close()
+	go ServeShow(l, func() {}, nil)
+	if err := AskToQuit(); err == nil {
+		t.Error("asking a copy with no quit to quit was reported as done")
+	}
+	if err := AskToShow(); err != nil {
+		t.Errorf("show must still work: %v", err)
+	}
+}
+
+// On low battery the agent stops asking for changes, which is right, but it
+// used to say nothing and never try a failed sync again. On 10 Nov 2026 the
+// owner's Mac went quiet for eight hours that way, with its changes unsent
+// and nothing on screen to explain it.
+func TestLowBatteryRetriesAFailedSyncAndSaysWhy(t *testing.T) {
+	var mu sync.Mutex
+	tries := 0
+	f, pb := &fake{}, &powerBox{s: lowBattery}
+	a := batteryAgent(f, pb, BatteryBalanced)
+	a.Timing.WhileClosed = 40 * time.Millisecond
+	a.Timing.WhileClosedBattery = 40 * time.Millisecond
+	a.Timing.MaxBackoff = 30 * time.Millisecond
+	a.Sync = func(context.Context) (engine.Report, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		tries++
+		return engine.Report{}, errors.New("the server is not answering")
+	}
+
+	runFor(a, 500*time.Millisecond, nil)
+
+	mu.Lock()
+	n := tries
+	mu.Unlock()
+	if n < 3 {
+		t.Errorf("a failed sync was tried %d time(s) in 500 ms on low battery; it must keep trying", n)
+	}
+	st := a.Status.Snapshot()
+	if st.PowerNote == "" {
+		t.Error("nothing on screen says why the sync is waiting on low battery")
+	}
+	if !strings.Contains(strings.ToLower(st.PowerNote), "battery") {
+		t.Errorf("the note does not mention the battery: %q", st.PowerNote)
 	}
 }
