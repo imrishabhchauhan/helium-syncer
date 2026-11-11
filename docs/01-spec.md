@@ -172,3 +172,28 @@ First setup:
 - Mac access for building/testing the macOS side.
 - Name check: "Helium Syncer" uses imput's product name — ship with "Unofficial, not affiliated with Helium/imput"; rename if asked.
 - GitHub repo `imrishabhchauhan/helium-syncer` (public) — create when the owner says go.
+
+## Battery comes first on a laptop
+
+Where two ways would both work, take the one that costs the person's
+battery and their computer less, as long as the experience holds. A
+desktop is always on power and can afford the faster way; a laptop cannot.
+The program reads the power state already, so it can take one path on each.
+
+Three rules, each learned from a real measurement on 11 November 2026:
+
+1. **Look before you read.** Ask the cheap question first. Finding out
+   whether an extension's saved data changed by packing and compressing all
+   of it took 498 ms; looking at the name, size and change time of the same
+   files takes 0.4 ms.
+2. **Count wakeups, not only processor time.** A laptop charges for being
+   woken. Two timers with nothing left to do were waking the owner's Mac
+   137 times a minute; with both fixed it is about 10. The processor time
+   barely moved, so processor time alone would have shown nothing.
+3. **Write only what you must keep.** Copying Helium's files before a sync
+   included the 44 MB history database, which is never written when history
+   is off, and the copies were never cleaned up: 2.1 GB on that Mac.
+
+Before adding anything that repeats on a timer, work out what it costs in
+an hour on battery, and measure it afterwards on a real laptop. Numbers in
+the README come from those measurements, never from an estimate.
