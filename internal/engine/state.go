@@ -79,6 +79,10 @@ type ProfileState struct {
 	// id -> latest data blob. They keep uploads to one per version/change.
 	ExtBlobs  map[string]string        `json:"ext_blobs"`
 	DataBlobs map[string]merge.ExtData `json:"data_blobs"`
+	// DataStamps is the cheap mark of each extension's data folders when
+	// it was last packed. It is what lets a sync skip reading and
+	// compressing the data when nothing changed.
+	DataStamps map[string]string `json:"data_stamps"`
 }
 
 func newProfileState() *ProfileState {
@@ -90,7 +94,7 @@ func newProfileState() *ProfileState {
 		SettingsBase: map[string]json.RawMessage{}, Settings: crdt.NewMap(),
 		ExtBase: map[string]json.RawMessage{}, ExtDataBase: map[string]json.RawMessage{},
 		Exts: crdt.NewMap(), ExtData: crdt.NewMap(),
-		ExtBlobs: map[string]string{}, DataBlobs: map[string]merge.ExtData{},
+		ExtBlobs: map[string]string{}, DataBlobs: map[string]merge.ExtData{}, DataStamps: map[string]string{},
 		histLoaded: true, // a new profile has no history file to read
 	}
 }
