@@ -108,3 +108,24 @@ func TestWriteIconPreview(t *testing.T) {
 		}
 	}
 }
+
+// Waking up every few seconds to redraw a line nobody is reading costs
+// battery on a laptop. Plugged in, or while a sync is running, it stays
+// quick.
+func TestItWaitsLongerOnBattery(t *testing.T) {
+	ok := View{Connected: true, SetupDone: true}
+	cases := []struct {
+		what string
+		v    View
+		want time.Duration
+	}{
+		{"plugged in", ok, 5 * time.Second},
+		{"on battery, nothing happening", with(ok, func(v *View) { v.OnBattery = true }), 30 * time.Second},
+		{"on battery, syncing", with(ok, func(v *View) { v.OnBattery = true; v.Syncing = true }), 5 * time.Second},
+	}
+	for _, c := range cases {
+		if got := Every(c.v); got != c.want {
+			t.Errorf("%s: waits %v, want %v", c.what, got, c.want)
+		}
+	}
+}

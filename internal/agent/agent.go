@@ -89,6 +89,7 @@ type Status struct {
 	mu         sync.Mutex
 	HeliumOpen bool
 	Live       bool // a browser with the helper extension is connected
+	OnBattery  bool // this computer is running on its battery
 	LastSync   time.Time
 	LastReport engine.Report
 	LastError  string
@@ -101,7 +102,7 @@ type Status struct {
 func (s *Status) Snapshot() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Status{HeliumOpen: s.HeliumOpen, Live: s.Live, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
+	return Status{HeliumOpen: s.HeliumOpen, Live: s.Live, OnBattery: s.OnBattery, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
 }
 
 // Agent runs the loop.
@@ -712,7 +713,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		live := a.LiveConnected != nil && a.LiveConnected()
 		a.Status.mu.Lock()
-		a.Status.HeliumOpen, a.Status.PowerNote, a.Status.Live = open, note, live
+		a.Status.HeliumOpen, a.Status.PowerNote, a.Status.Live, a.Status.OnBattery = open, note, live, pw.OnBattery
 		a.Status.mu.Unlock()
 		wasOpen, first = open, false
 		if due {

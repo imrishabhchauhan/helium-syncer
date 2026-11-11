@@ -18,6 +18,18 @@ type View struct {
 	Elsewhere  bool   // the command-line agent runs the sync, not this app
 	PowerNote  string // the sync waits for power
 	Live       bool   // a browser with the helper extension is connected
+	OnBattery  bool   // this computer is running on its battery
+}
+
+// Every is how long to wait before reading the status again. On a computer
+// running on its battery there is no reason to wake up every few seconds to
+// redraw a line nobody is reading; plugged in, or while a sync is running,
+// it stays quick.
+func Every(v View) time.Duration {
+	if v.Syncing || !v.OnBattery {
+		return 5 * time.Second
+	}
+	return 30 * time.Second
 }
 
 // Line is the short status shown in the menu and tooltip, and whether it

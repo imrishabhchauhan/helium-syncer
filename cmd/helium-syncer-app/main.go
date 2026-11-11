@@ -128,6 +128,10 @@ func main() {
 
 // keepAgent starts the background sync as soon as this computer is
 // connected (right away, or once the person finishes the first steps).
+// keepAgent starts the background sync as soon as this computer is
+// connected, then stops looking. It used to keep asking every two seconds
+// for as long as the program ran: on a laptop that is 30 wakeups a minute,
+// for ever, to answer a question that was already settled.
 func keepAgent(ctx context.Context, s *ui.Server, logger *log.Logger) {
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
@@ -142,6 +146,9 @@ func keepAgent(ctx context.Context, s *ui.Server, logger *log.Logger) {
 					logger.Printf("cannot start the background sync: %v", err)
 				}
 			}
+		}
+		if s.Agent() != nil {
+			return // started: nothing left to watch for
 		}
 		select {
 		case <-ctx.Done():
@@ -159,7 +166,8 @@ func view(s *ui.Server, elsewhere bool) tray.View {
 	v := tray.View{Connected: cfg.Connected(), SetupDone: cfg.SetupDone, LastSync: cfg.LastSync, LastError: cfg.LastError, Elsewhere: elsewhere}
 	if a := s.Agent(); a != nil {
 		st := a.Status.Snapshot()
-		v.HeliumOpen, v.Syncing, v.Paused, v.LastError, v.PowerNote, v.Live = st.HeliumOpen, st.Syncing, st.Paused, st.LastError, st.PowerNote, st.Live
+		v.HeliumOpen, v.Syncing, v.Paused, v.LastError = st.HeliumOpen, st.Syncing, st.Paused, st.LastError
+		v.PowerNote, v.Live, v.OnBattery = st.PowerNote, st.Live, st.OnBattery
 		if st.LastSync.After(v.LastSync) {
 			v.LastSync = st.LastSync
 		}

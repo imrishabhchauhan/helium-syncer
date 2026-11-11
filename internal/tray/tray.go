@@ -114,17 +114,33 @@ func ready(o Options) {
 	}
 	refresh()
 	go func() {
-		tick := time.NewTicker(5 * time.Second) // only reads memory and one file date
-		defer tick.Stop()
+		// A timer, not a ticker: how long to wait depends on what the last
+		// reading said. See Every.
+		wait := time.NewTimer(Every(o.Status()))
+		defer wait.Stop()
+		// again arms the timer, whether or not it has already fired.
+		again := func(d time.Duration) {
+			if !wait.Stop() {
+				select {
+				case <-wait.C:
+				default:
+				}
+			}
+			wait.Reset(d)
+		}
 		for {
 			select {
-			case <-tick.C:
+			case <-wait.C:
 				refresh()
+				wait.Reset(Every(o.Status()))
 			case <-open.ClickedCh:
 				o.Open()
 			case <-syncNow.ClickedCh:
 				o.SyncNow()
 				refresh()
+				// The person asked for this and is looking at it: follow it
+				// closely for a moment, whatever the power state.
+				again(time.Second)
 			case <-quit.ClickedCh:
 				systray.Quit()
 				return
