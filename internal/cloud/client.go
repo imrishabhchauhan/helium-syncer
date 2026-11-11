@@ -54,12 +54,17 @@ func (e *APIError) Error() string { return e.Message }
 // radio awake, which is what a laptop pays for.
 const IdleFor = 6 * time.Minute
 
-// DialFor is how long to wait for a connection. Go's own default is 30
-// seconds. On a network that drops packets the system retries a lost
-// connection by itself for about 16 seconds, which happened on 4% of the
-// owner's syncs and still worked, so this must stay well above that: it is
-// here only to stop the rare connection that hangs much longer.
-const DialFor = 25 * time.Second
+// DialFor is how long to wait for a connection, across every address the
+// name gives.
+//
+// The server's name gives several addresses. Go tries them one after
+// another and splits this time between them, so half of it is what a dead
+// address costs before the next one is tried. Measured on the owner's
+// Windows PC on 11 Nov 2026: one of the two addresses was hanging, and
+// with Go's 30-second default each sync began with a 13 to 16 second wait
+// while the good address sat there untried. Eight seconds means a hanging
+// address costs about four, and a healthy connection needs 0.15.
+const DialFor = 8 * time.Second
 
 // shared is the connection pool every client uses.
 var shared = &http.Transport{

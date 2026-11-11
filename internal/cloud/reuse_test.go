@@ -19,16 +19,21 @@ func TestAConnectionIsKeptLongerThanTheGapBetweenSyncs(t *testing.T) {
 	}
 }
 
-// Waiting for a connection must stay well above the sixteen seconds the
-// system itself spends retrying a lost one, or a sync that would have
-// worked is given up on and has to wait for the next try.
-func TestItWaitsLongEnoughForTheSystemToRetry(t *testing.T) {
-	const systemRetries = 16 * time.Second
-	if DialFor <= systemRetries {
-		t.Errorf("gives up after %v, but the system retries for about %v", DialFor, systemRetries)
+// The server's name gives several addresses, and Go tries them one after
+// another, splitting the wait between them. So half the wait is what one
+// hanging address costs before the good one is tried. Go's 30-second
+// default made every sync on the owner's PC start with a 13 to 16 second
+// pause while a working address sat there untried.
+func TestAHangingAddressIsGivenUpOnQuickly(t *testing.T) {
+	const addresses = 2 // what the server's name gives today
+	perAddress := DialFor / addresses
+	if perAddress > 5*time.Second {
+		t.Errorf("one hanging address costs %v before the next is tried", perAddress)
 	}
-	if DialFor >= 60*time.Second {
-		t.Errorf("waits %v, which is longer than a whole sync is allowed to take", DialFor)
+	// And still far more than a healthy connection needs, which was
+	// measured at 0.15 seconds.
+	if perAddress < time.Second {
+		t.Errorf("only %v for each address, which a slow link would not manage", perAddress)
 	}
 }
 
