@@ -20,7 +20,10 @@ case "$APP" in bin/*.app) rm -rf "$APP" ;; esac
 mkdir -p "$MACOS" "$APP/Contents/Resources"
 
 for arch in arm64 amd64; do
-	echo "Building for $arch…"
+	# Braces around the name: the old bash that ships with macOS reads
+	# "$arch…" as a variable called arch plus the first byte of the three
+	# dots, which is unset, and the build then stops at the first line.
+	echo "Building for ${arch}…"
 	CGO_ENABLED=1 GOOS=darwin GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$TMP/app-$arch" ./cmd/helium-syncer-app
 	CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath -ldflags "-s -w" -o "$TMP/cli-$arch" ./cmd/helium-syncer
 done

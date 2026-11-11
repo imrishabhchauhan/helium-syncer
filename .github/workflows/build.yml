@@ -25,12 +25,30 @@ jobs:
         env:
           VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.1.0-dev' }}
         run: ./scripts/build-app.sh
+      - name: Check the build is real
+        # The build once failed on the first line and the step still passed,
+        # so a 668-byte empty app was packed and called a release. Look at
+        # what came out, not at the exit code.
+        run: |
+          set -eu
+          app="bin/Helium Syncer.app/Contents/MacOS"
+          for f in helium-syncer-app helium-syncer; do
+            test -x "$app/$f" || { echo "missing: $f"; exit 1; }
+            size=$(stat -f%z "$app/$f")
+            test "$size" -gt 5000000 || { echo "$f is only $size bytes"; exit 1; }
+            lipo -archs "$app/$f" | grep -q arm64 || { echo "$f is not built for Apple silicon"; exit 1; }
+            lipo -archs "$app/$f" | grep -q x86_64 || { echo "$f is not built for Intel"; exit 1; }
+          done
+          codesign --verify --deep "bin/Helium Syncer.app"
+          echo "ok: $(lipo -archs "$app/helium-syncer-app")"
       - name: Pack
         # A zip keeps the file permissions and the ad-hoc signature that
         # Apple silicon needs; a plain upload would lose both.
         run: |
+          set -eu
           cd bin
           ditto -c -k --keepParent "Helium Syncer.app" "Helium-Syncer-Mac.zip"
+          test "$(stat -f%z Helium-Syncer-Mac.zip)" -gt 5000000
           shasum -a 256 "Helium-Syncer-Mac.zip" | tee "Helium-Syncer-Mac.zip.sha256"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -51,9 +69,26 @@ jobs:
       - name: Build
         shell: pwsh
         run: ./scripts/build-app.ps1
+      - name: Check the build is real
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($f in 'bin/Helium Syncer.exe','bin/helium-syncer.exe','bin/arm64/Helium Syncer.exe','bin/arm64/helium-syncer.exe') {
+            if (-not (Test-Path $f)) { throw "missing: $f" }
+            $len = (Get-Item $f).Length
+            if ($len -lt 5000000) { throw "$f is only $len bytes" }
+          }
+          # The window program must have no console, or Windows shows a
+          # black terminal window from log-in until shut-down.
+          $fs = [IO.File]::OpenRead((Resolve-Path 'bin/Helium Syncer.exe'))
+          $br = New-Object IO.BinaryReader($fs); $fs.Position = 0x3C; $pe = $br.ReadInt32()
+          $fs.Position = $pe + 0x5C; $sub = $br.ReadUInt16(); $br.Close(); $fs.Close()
+          if ($sub -ne 2) { throw "Helium Syncer.exe is a console program (subsystem $sub)" }
+          Write-Host "ok: the window program has no console"
       - name: Pack
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           Compress-Archive -Path 'bin/Helium Syncer.exe','bin/helium-syncer.exe' -DestinationPath 'bin/Helium-Syncer-Windows-x64.zip'
           Compress-Archive -Path 'bin/arm64/Helium Syncer.exe','bin/arm64/helium-syncer.exe' -DestinationPath 'bin/Helium-Syncer-Windows-arm64.zip'
           Get-FileHash 'bin/Helium-Syncer-Windows-x64.zip','bin/Helium-Syncer-Windows-arm64.zip' -Algorithm SHA256 |
