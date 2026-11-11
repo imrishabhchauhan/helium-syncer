@@ -25,11 +25,31 @@ func Save(_ string, name string, data []byte) error {
 	return nil
 }
 
-// Load reads what Save stored.
+// notFoundExit is what the security tool returns when the keychain holds
+// no such item. Every other failure means something else: most often 36,
+// "user interaction is not allowed", which is what a program started
+// outside the person's desktop session gets.
+const notFoundExit = 44
+
+// Load reads what Save stored. It tells "nothing saved" apart from "saved
+// but it would not open": they used to look the same, and a program that
+// could not open the keychain then told the person they had never joined a
+// sync, which sends them to join again and replace the sync they have.
 func Load(_ string, name string) ([]byte, error) {
-	out, err := exec.Command("/usr/bin/security", "find-generic-password", "-a", name, "-s", service, "-w").Output()
+	cmd := exec.Command("/usr/bin/security", "find-generic-password", "-a", name, "-s", service, "-w")
+	var errOut bytes.Buffer
+	cmd.Stderr = &errOut
+	out, err := cmd.Output()
 	if err != nil {
-		return nil, ErrNotFound
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == notFoundExit {
+			return nil, ErrNotFound
+		}
+		msg := strings.TrimSpace(errOut.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return nil, fmt.Errorf("secrets: keychain: %s", msg)
 	}
 	return hex.DecodeString(strings.TrimSpace(string(out)))
 }

@@ -11,6 +11,10 @@ import (
 // SetAutostart is not supported on this OS yet.
 func SetAutostart(bool) error { return errors.New("start at login is not supported on this OS yet") }
 
+// StartsNow says that turning start-at-login on also starts the program
+// right away.
+func StartsNow() bool { return false }
+
 // Autostart reports whether start-at-login is on.
 func Autostart() bool { return false }
 

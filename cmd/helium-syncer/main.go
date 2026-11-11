@@ -235,8 +235,15 @@ func run(cmd string, pos []string, folder, name, server string, dry, restore boo
 			return err
 		}
 		if on {
-			if err := agent.StartDetached(); err != nil {
-				return err
+			// On some systems turning it on already started the program, in
+			// the person's own desktop session. Starting a second copy from
+			// here would be a copy without that session, which cannot open
+			// the key store: it could take the lock and then fail every
+			// sync.
+			if !agent.StartsNow() {
+				if err := agent.StartDetached(); err != nil {
+					return err
+				}
 			}
 			fmt.Println("✓ Helium Syncer now runs in the background and starts when you log in.")
 			fmt.Println("  It syncs a few seconds after you quit Helium, and every few minutes while Helium is closed.")

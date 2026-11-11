@@ -105,6 +105,13 @@ func plistArgs(args []string) string {
 	return b.String()
 }
 
+// StartsNow says that turning start-at-login on also starts the program
+// right away, in the person's desktop session. launchd does that on macOS,
+// which matters: a copy started from anywhere else (an SSH session, a
+// script) cannot open the Keychain, so it would hold the lock and then fail
+// every sync with "this device is not connected".
+func StartsNow() bool { return true }
+
 // Autostart reports whether start-at-login is on.
 func Autostart() bool {
 	_, err := os.Stat(plistPath())

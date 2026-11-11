@@ -61,6 +61,11 @@ func SetAutostart(on bool) error {
 	return k.SetStringValue(runValue, `"`+exe+`" `+strings.Join(args, " "))
 }
 
+// StartsNow says that turning start-at-login on also starts the program
+// right away. On Windows the registry entry only applies at the next
+// log-in, so the program has to be started separately.
+func StartsNow() bool { return false }
+
 // Autostart reports whether start-at-login is on.
 func Autostart() bool {
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.QUERY_VALUE)
