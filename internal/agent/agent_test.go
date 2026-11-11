@@ -11,6 +11,7 @@ import (
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/app"
 	"github.com/imrishabhchauhan/helium-syncer/internal/engine"
+	"github.com/imrishabhchauhan/helium-syncer/internal/live"
 	"github.com/imrishabhchauhan/helium-syncer/internal/power"
 )
 
@@ -651,5 +652,32 @@ func TestTheLogNamesWhatMoved(t *testing.T) {
 	}
 	if strings.Contains(kindsLine(map[string]int{"ext": 3}), "ext)") {
 		t.Error("the line should say 'extensions', not the short name")
+	}
+}
+
+// The browser only knows to stop holding itself awake if this computer
+// tells it. On battery it must be told "battery", plugged in "plugged",
+// and in the mode that treats battery like power it must stay awake.
+func TestTheBrowserIsToldHowThisComputerIsPowered(t *testing.T) {
+	cases := []struct {
+		name string
+		pw   power.State
+		mode string
+		want string
+	}{
+		{"on battery", onBattery, BatteryBalanced, live.ModeBattery},
+		{"plugged in", pluggedIn, BatteryBalanced, live.ModePlugged},
+		{"on battery, told to sync always", onBattery, BatteryAlways, live.ModePlugged},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, pb := &fake{}, &powerBox{s: c.pw}
+			a := batteryAgent(f, pb, c.mode)
+			a.Live = live.New(t.TempDir())
+			runFor(a, 60*time.Millisecond, nil)
+			if got := a.Live.Mode(); got != c.want {
+				t.Errorf("the browser was told %q, want %q", got, c.want)
+			}
+		})
 	}
 }
