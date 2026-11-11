@@ -188,6 +188,12 @@ func openLog() *log.Logger {
 		}
 		if f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600); err == nil {
 			l := log.New(f, "", log.LstdFlags)
+			// This program has no console, so a crash would otherwise
+			// print its reason into nowhere and the program would simply
+			// vanish. Send it here instead.
+			if err := app.CatchCrashes(f); err != nil {
+				l.Printf("cannot record a crash if one happens: %v", err)
+			}
 			l.Printf("Helium Syncer %s starting (%s)", app.Version, fmt.Sprint(os.Args[1:]))
 			return l
 		}
