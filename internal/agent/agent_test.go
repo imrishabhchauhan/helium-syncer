@@ -631,3 +631,19 @@ func TestLowBatteryRetriesAFailedSyncAndSaysWhy(t *testing.T) {
 		t.Errorf("the note does not mention the battery: %q", st.PowerNote)
 	}
 }
+
+// A number on its own in the log ("sent 4") gives nobody a way to tell
+// bookmarks from tabs. The line must name what moved.
+func TestTheLogNamesWhatMoved(t *testing.T) {
+	if got := kindsLine(nil); got != "" {
+		t.Errorf("nothing sent should add nothing to the line, got %q", got)
+	}
+	got := kindsLine(map[string]int{"setting": 4, "bookmark": 1, "ext-data": 2})
+	want := " (1 bookmarks, 2 extension data, 4 settings)"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+	if strings.Contains(kindsLine(map[string]int{"ext": 3}), "ext)") {
+		t.Error("the line should say 'extensions', not the short name")
+	}
+}

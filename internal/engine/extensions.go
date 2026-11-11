@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/imrishabhchauhan/helium-syncer/internal/crdt"
@@ -18,6 +19,43 @@ import (
 type BlobStore interface {
 	PutBlob(ctx context.Context, data []byte) (string, error)
 	GetBlob(ctx context.Context, id string) ([]byte, error)
+}
+
+// packageFor returns the package already uploaded for this extension, and
+// remembers it under the version asked for.
+//
+// Helium updates extensions in place, so the version installed here soon
+// differs from the one that was uploaded. The uploaded package still
+// installs the extension on the other computer, which then gets the update
+// from Helium itself, so a fresh upload of up to 44 MB buys nothing.
+//
+// Remembering it is what stops a loop. Two passes run over the same
+// extensions: one that may upload, and one that only records what is there.
+// The first fell back to the older package, the second did not, so the two
+// never matched and every sync reported the same extensions as changed and
+// sent them again. The owner's Mac sent the same four every five minutes,
+// for ever.
+func packageFor(blobs map[string]string, id, version string) string {
+	key := id + "@" + version
+	if b, ok := blobs[key]; ok {
+		return b
+	}
+	var older []string
+	for k := range blobs {
+		if strings.HasPrefix(k, id+"@") {
+			older = append(older, k)
+		}
+	}
+	if len(older) == 0 {
+		return ""
+	}
+	// Sorted, so the answer is the same on every run. Going over the map
+	// as it comes could pick a different package each time, which is the
+	// same loop again.
+	sort.Strings(older)
+	b := blobs[older[len(older)-1]]
+	blobs[key] = b
+	return b
 }
 
 // syncExtensions uploads this profile's extensions (once per version) and
@@ -37,17 +75,11 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 	}
 	pkgFor := func(upload bool) func(id, version string) (string, error) {
 		return func(id, version string) (string, error) {
-			key := id + "@" + version
-			if b, ok := ps.ExtBlobs[key]; ok || !upload {
+			if b := packageFor(ps.ExtBlobs, id, version); b != "" {
 				return b, nil
 			}
-			// Helium updated the extension here: keep the package that is
-			// already uploaded. A computer that installs it from there gets
-			// the update from Helium, so a new 44 MB upload buys nothing.
-			for k, b := range ps.ExtBlobs {
-				if strings.HasPrefix(k, id+"@") {
-					return b, nil
-				}
+			if !upload {
+				return "", nil
 			}
 			if !extensions.SyncsPackage(dir, id) {
 				return "", nil // too big for the server: name and state still sync
@@ -60,7 +92,7 @@ func syncExtensions(ctx context.Context, cfg Config, ps *ProfileState, dir strin
 			if err != nil {
 				return "", fmt.Errorf("uploading extension %s: %w", id, err)
 			}
-			ps.ExtBlobs[key] = b
+			ps.ExtBlobs[id+"@"+version] = b
 			return b, nil
 		}
 	}

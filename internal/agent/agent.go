@@ -749,6 +749,27 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
+// kindsLine names what was sent or received, so a line in the log says
+// which part of Helium changed. Without it a number on its own ("sent 4")
+// gives nobody, the owner included, any way to tell bookmarks from tabs.
+func kindsLine(m map[string]int) string {
+	if len(m) == 0 {
+		return ""
+	}
+	labels := map[string]string{"bookmark": "bookmarks", "visit": "visits", "title": "page titles", "tab": "tabs",
+		"group": "tab groups", "setting": "settings", "profile": "profiles", "ext": "extensions", "ext-data": "extension data"}
+	parts := make([]string, 0, len(m))
+	for k, v := range m {
+		l := labels[k]
+		if l == "" {
+			l = k
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", v, l))
+	}
+	sort.Strings(parts)
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
 func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 	a.Status.mu.Lock()
 	a.Status.Syncing = true
@@ -796,7 +817,8 @@ func (a *Agent) syncOnce(ctx context.Context, reason string) error {
 		a.logf("Helium %s is newer than the versions the tests ran on; syncing, with each file checked before it is written", rep.Untested)
 	}
 	if rep.Sent+rep.Received > 0 || (reason != "periodic" && reason != liveCheckReason) {
-		a.logf("%s: sent %d, received %d, wrote %v, took %s", reason, rep.Sent, rep.Received, rep.Written, tookLine(rep.Took))
+		a.logf("%s: sent %d%s, received %d%s, wrote %v, took %s", reason,
+			rep.Sent, kindsLine(rep.SentByType), rep.Received, kindsLine(rep.ReceivedByType), rep.Written, tookLine(rep.Took))
 	}
 	return nil
 }

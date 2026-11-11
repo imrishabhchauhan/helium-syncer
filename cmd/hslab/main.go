@@ -56,6 +56,8 @@ func main() {
 	case "close":
 		port, _ := strconv.Atoi(os.Args[2])
 		err = closeBrowser(port)
+	case "exthash": // exthash <profile-dir>: is an extension's data hash steady?
+		err = extHash(os.Args[2])
 	case "tabs": // tabs <profile-dir> [live]: the tabs Helium restores next start (read only)
 		err = listTabs(os.Args[2], len(os.Args) > 3 && os.Args[3] == "live")
 	default:
