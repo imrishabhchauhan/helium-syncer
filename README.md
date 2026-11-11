@@ -151,12 +151,17 @@ After this, Helium Syncer works by itself. It shows an icon next to the clock (W
 
 ## Battery and speed
 
-Helium Syncer does very little while it waits. We measured it:
+Helium Syncer does very little while it waits. Measured on 11 November 2026 on two real computers that sync about 600 bookmarks, 12 extensions and 30 tabs:
 
-| | Measured |
-|---|---|
-| Windows 11, Helium closed | **about 1 second of processor time in 1 hour** (about 0.03 %), about 21 MB memory |
-| MacBook Air on battery, Helium open (about 600 bookmarks and 30 tabs) | **about 0.07 seconds of processor time in 5 minutes**, about 94 MB memory |
+| | Processor | Memory |
+|---|---|---|
+| Windows desktop, Helium open, syncing live | **1.2 seconds in 12 minutes** (0.16 %) | 5 MB |
+| MacBook Air, Helium open, syncing live | **1.7 seconds in 12 minutes** (0.22 %) | 44 MB |
+
+The Mac number is what macOS charges the app; a tool like Activity Monitor shows about 100 MB, because it counts the shared Apple frameworks that every program on the Mac loads.
+
+> [!NOTE]
+> An earlier version of this page said the Mac used "about 0.07 seconds in 5 minutes". That was wrong. Measured again on 11 November 2026, a sync with nothing to do spent 4.3 seconds in the extensions step alone, because it packed and compressed every extension's saved data just to find out whether any of it had changed. Measured on that Mac's own profile, packing takes **498 ms** and looking at the name, size and change time of the same files takes **0.4 ms**. A sync does it twice, so the cost per sync fell from about a second to under a millisecond; the rest of the 4.3 seconds was an extension that was reported as changed on every sync, fixed the same day.
 
 **While Helium is open** (bookmarks and open tabs):
 
