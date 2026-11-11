@@ -41,33 +41,52 @@ func onDisk(p string) bool {
 }
 
 // SetAutostart starts the agent at login (current user only) or stops that.
+// It uses a scheduled task, which also starts the program again if it ever
+// stops - a registry Run entry starts it once and never looks again.
 func SetAutostart(on bool) error {
-	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.SET_VALUE|registry.QUERY_VALUE)
-	if err != nil {
-		return err
-	}
-	defer k.Close()
 	if !on {
-		if err := k.DeleteValue(runValue); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		if err := removeTask(); err != nil {
 			return err
 		}
-		return nil
+		return removeRunEntry()
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
 	exe, args := loginProgram(exe, onDisk)
-	return k.SetStringValue(runValue, `"`+exe+`" `+strings.Join(args, " "))
+	if err := writeTask(exe, args, currentUser()); err != nil {
+		return err
+	}
+	// The old way, if it is still there, would start a second copy at the
+	// next log-in.
+	return removeRunEntry()
+}
+
+// removeRunEntry takes away the registry entry older versions used.
+func removeRunEntry() error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.SET_VALUE|registry.QUERY_VALUE)
+	if err != nil {
+		return nil // no Run key at all: nothing to take away
+	}
+	defer k.Close()
+	if err := k.DeleteValue(runValue); err != nil && !errors.Is(err, registry.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // StartsNow says that turning start-at-login on also starts the program
-// right away. On Windows the registry entry only applies at the next
-// log-in, so the program has to be started separately.
+// right away. On Windows it does not: the task is created but not started,
+// so StartDetached runs it.
 func StartsNow() bool { return false }
 
-// Autostart reports whether start-at-login is on.
+// Autostart reports whether start-at-login is on, either way: the task, or
+// the registry entry an older version left behind.
 func Autostart() bool {
+	if taskExists() {
+		return true
+	}
 	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.QUERY_VALUE)
 	if err != nil {
 		return false
@@ -80,7 +99,19 @@ func Autostart() bool {
 // StartDetached starts the agent in the background without a console window.
 // It starts the same program that start-at-login would, so what runs now and
 // what runs after the next log-in are the same thing.
+//
+// Where the scheduled task exists, Windows is asked to start it. That
+// matters: a program started from here belongs to whatever started this
+// one, and Windows takes a whole group of programs down together. On
+// 11 Nov 2026 the owner's sync was started that way by another app, and
+// when that app updated itself the sync went with it and stayed gone for
+// two hours.
 func StartDetached() error {
+	if taskExists() {
+		if err := runTask(); err == nil {
+			return nil
+		}
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err

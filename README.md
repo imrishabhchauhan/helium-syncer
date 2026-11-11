@@ -254,8 +254,19 @@ You opened it on your other computer. Open tabs sync between your computers.
 **Can I stop syncing on one computer?**
 Yes. Go to **Settings** and select **Leave**. Your Helium data stays on that computer.
 
+**What starts it, and what if it stops?**
+
+It starts when you log in, and starts again by itself if it ever stops - a crash, or another program taking it down with it.
+
+| | How it starts | If it stops |
+|---|---|---|
+| Mac | A LaunchAgent, `~/Library/LaunchAgents/com.aiwithrishabh.helium-syncer.plist` | Back in about 3 seconds |
+| Windows | A scheduled task named **Helium Syncer** | Back within a minute |
+
+Neither needs an administrator, and neither shows a window. On Windows the task also tells Windows **not** to stop it when a laptop is unplugged, which Windows otherwise does to scheduled tasks by default.
+
 **How do I remove Helium Syncer?**
-1. In Helium Syncer, go to **Settings** and select **Leave**.
+1. In Helium Syncer, go to **Settings** and select **Leave**. This also takes away the LaunchAgent or the scheduled task.
 2. Quit Helium Syncer from its icon menu.
 3. Delete the app.
 4. In Helium, open the Extensions page. Remove **Helium Syncer**. If you use no other extension from outside the Web Store, switch off **Developer mode**.
