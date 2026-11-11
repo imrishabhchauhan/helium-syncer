@@ -12,10 +12,10 @@
 |---|---|---|---|
 | 1 | ✅ **Tests on GitHub for every change** (done 10 Nov 2026) | Nothing broken reaches users | Free (public repositories get GitHub Actions for free) |
 | 2 | ✅ **Helium updates do not stop sync** (done 10 Nov 2026) | Helium updates often; today each update pauses sync for everyone | Free |
-| 3 | **Downloads on the Releases page** | People need a file, not source code | Free |
+| 3 | 🟡 **Downloads on the Releases page** (the Build workflow makes the files, 11 Nov 2026; the Releases page itself is next) | People need a file, not source code | Free |
 | 4 | **Signed downloads** | Without signing, Windows shows a warning and macOS blocks a downloaded app | Free: Windows via SignPath; Mac without the Apple fee (see part 4) |
 | 5 | **Automatic updates** | Users never need to come back to GitHub | Free |
-| 6 | **Server ready for more people** | One shared free server for everyone can run out | Free at first; USD 5 a month later |
+| 6 | 🟡 **Server ready for more people** ("last seen" at most once an hour, done 11 Nov 2026; the per-account daily limit is next) | One shared free server for everyone can run out | Free at first; USD 5 a month later |
 | 7 | **Clean leave and uninstall** | "Leave" does not remove the helper extension or Developer mode today | Free |
 | 8 | **Clear first-run and help** | If people are confused, nobody uses it | Free |
 
@@ -38,6 +38,8 @@ What was planned:
 - A scheduled GitHub workflow (once a day) downloads the newest Helium, runs the real-Helium tests, and, if they pass, adds that version to a small "tested" list in the repository. The app reads that list once a day. A new Helium version is then supported without a new app version.
 
 ## 3. Downloads on the Releases page
+
+Done 11 Nov 2026: `.github/workflows/build.yml` builds both, checks what came out (the programs are there, big enough, both Apple silicon and Intel, signed, and the Windows window program has no console) and, on a version tag, puts them on a draft release. What is left is to write the release notes and the download section of the README.
 
 - A git tag (for example `v0.2.0`) starts a workflow that builds:
   - Windows: `Helium-Syncer-Windows-x64.zip` and `-arm64.zip` (later an installer).
@@ -69,7 +71,8 @@ Today everyone uses the owner's free Cloudflare server.
 
 - **Free plan:** 100,000 requests a day for all users together. A user plugged in all day makes a few hundred to a few thousand requests a day, so the free plan carries roughly 50 to 200 active users.
 - **Paid plan (USD 5 a month):** 10 million requests a month included; enough for thousands of users.
-- **Before release:** a per-account daily limit, so one broken install cannot use up everyone's allowance; write `last_seen` at most once an hour (today each request writes it); a self-hosting guide for people who want their own server.
+- **Done 11 Nov 2026:** `last_seen` is written at most once an hour, and it can no longer fail the call it rides on. It used to be a database write before every single request; on 10 Nov a hiccup in that one write stopped all sync, reads included, on both of the owner's computers for hours.
+- **Before release:** a per-account daily limit, so one broken install cannot use up everyone's allowance; a self-hosting guide for people who want their own server.
 
 ## 7. Clean leave and uninstall
 

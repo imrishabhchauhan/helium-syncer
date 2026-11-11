@@ -218,6 +218,19 @@ If Helium is not installed, the window tells you. It gives you a button to get H
 
 ## Questions
 
+**How do I know it is working?**
+
+Look at the Helium Syncer icon: in the Windows tray, in the macOS menu bar. It tells you in words what is happening right now.
+
+| What it says | What it means |
+|---|---|
+| Syncing while Helium is open | Bookmarks and open tabs are syncing this second. Everything else waits for you to close Helium |
+| Syncs after you quit Helium | The helper extension is not connected yet. It is added the next time you close Helium |
+| Up to date · synced 5 minutes ago | Nothing is waiting |
+| Battery is low: syncs when you plug in | Your changes still go out; changes from your other computer arrive when you plug in |
+| On battery: syncs when you plug in | You chose "only when plugged in" in Settings |
+| Problem syncing · open Helium Syncer | Open the window: it says what went wrong |
+
 **I lost my sync code. What do I do?**
 On a computer that still syncs, open Helium Syncer. Go to **Settings**. Select **Show** next to **Sync code**.
 
