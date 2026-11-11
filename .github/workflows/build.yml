@@ -1,0 +1,83 @@
+# Builds the programs people download: the Mac app and the Windows programs.
+# Free for public repositories. Start it by hand for a test build; a version
+# tag (v0.2.0) builds and attaches the files to the Releases page.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    name: Mac app
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+      - name: Build
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '0.1.0-dev' }}
+        run: ./scripts/build-app.sh
+      - name: Pack
+        # A zip keeps the file permissions and the ad-hoc signature that
+        # Apple silicon needs; a plain upload would lose both.
+        run: |
+          cd bin
+          ditto -c -k --keepParent "Helium Syncer.app" "Helium-Syncer-Mac.zip"
+          shasum -a 256 "Helium-Syncer-Mac.zip" | tee "Helium-Syncer-Mac.zip.sha256"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mac
+          path: |
+            bin/Helium-Syncer-Mac.zip
+            bin/Helium-Syncer-Mac.zip.sha256
+
+  windows:
+    name: Windows programs
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.10"
+      - name: Build
+        shell: pwsh
+        run: ./scripts/build-app.ps1
+      - name: Pack
+        shell: pwsh
+        run: |
+          Compress-Archive -Path 'bin/Helium Syncer.exe','bin/helium-syncer.exe' -DestinationPath 'bin/Helium-Syncer-Windows-x64.zip'
+          Compress-Archive -Path 'bin/arm64/Helium Syncer.exe','bin/arm64/helium-syncer.exe' -DestinationPath 'bin/Helium-Syncer-Windows-arm64.zip'
+          Get-FileHash 'bin/Helium-Syncer-Windows-x64.zip','bin/Helium-Syncer-Windows-arm64.zip' -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Set-Content 'bin/Helium-Syncer-Windows.sha256'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows
+          path: |
+            bin/Helium-Syncer-Windows-x64.zip
+            bin/Helium-Syncer-Windows-arm64.zip
+            bin/Helium-Syncer-Windows.sha256
+
+  release:
+    name: Attach to the release
+    if: github.ref_type == 'tag'
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: files
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        with:
+          files: files/*/*
+          draft: true
+          generate_release_notes: true

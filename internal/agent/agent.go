@@ -88,6 +88,7 @@ var ErrAlreadyRunning = errors.New("Helium Syncer is already running in the back
 type Status struct {
 	mu         sync.Mutex
 	HeliumOpen bool
+	Live       bool // a browser with the helper extension is connected
 	LastSync   time.Time
 	LastReport engine.Report
 	LastError  string
@@ -100,7 +101,7 @@ type Status struct {
 func (s *Status) Snapshot() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return Status{HeliumOpen: s.HeliumOpen, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
+	return Status{HeliumOpen: s.HeliumOpen, Live: s.Live, LastSync: s.LastSync, LastReport: s.LastReport, LastError: s.LastError, Paused: s.Paused, Syncing: s.Syncing, PowerNote: s.PowerNote}
 }
 
 // Agent runs the loop.
@@ -666,8 +667,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		case pluggedOnly:
 			note = "On battery: syncs when you plug in."
 		case lowPower && !first:
-			// Low battery or saver mode: pull nothing now. The next quit of
-			// Helium still sends its changes.
+			// Low battery or saver mode: ask for nothing now. The next quit
+			// of Helium still sends its changes.
+			note = "Battery is low: syncs when you plug in."
+			// A sync that failed is the one exception. Without this, a
+			// computer whose last sync failed went quiet until the battery
+			// was charged: on 10 Nov 2026 the owner's Mac said nothing for
+			// eight hours while its changes sat unsent.
+			if backoff > 0 && now.Sub(lastAttempt) >= t.WhileClosed+backoff {
+				due, reason = true, "retry"
+			}
 		default:
 			interval := t.WhileClosed
 			if pw.OnBattery && mode == BatteryBalanced {
@@ -684,8 +693,9 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 		default:
 		}
+		live := a.LiveConnected != nil && a.LiveConnected()
 		a.Status.mu.Lock()
-		a.Status.HeliumOpen, a.Status.PowerNote = open, note
+		a.Status.HeliumOpen, a.Status.PowerNote, a.Status.Live = open, note, live
 		a.Status.mu.Unlock()
 		wasOpen, first = open, false
 		if due {

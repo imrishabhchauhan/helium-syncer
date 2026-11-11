@@ -596,7 +596,8 @@ function statusOf(s) {
   if (s.paused) return ["warn", "Paused", s.paused];
   if (s.lastError) return ["warn", "Needs your attention", s.lastError];
   if (s.powerNote) return ["wait", "Waits for power", s.powerNote];
-  if (s.heliumOpen) return ["wait", "Helium is open", "Changes sync when you close Helium."];
+  if (s.heliumOpen && s.live) return ["ok", "Syncing while Helium is open", "Bookmarks and open tabs sync now. Everything else syncs when you close Helium."];
+  if (s.heliumOpen) return ["wait", "Helium is open", "Bookmarks and open tabs sync live once the helper extension is in place, after the next time you close Helium. Everything else syncs when you close Helium."];
   if (!s.lastSync) return ["ok", "Ready", "Nothing synced yet."];
   return ["ok", "Up to date", "Last sync " + ago(s.lastSync)];
 }

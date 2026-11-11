@@ -2,6 +2,7 @@ package tray
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,7 @@ type View struct {
 	Paused     string
 	Elsewhere  bool   // the command-line agent runs the sync, not this app
 	PowerNote  string // the sync waits for power
+	Live       bool   // a browser with the helper extension is connected
 }
 
 // Line is the short status shown in the menu and tooltip, and whether it
@@ -33,9 +35,16 @@ func Line(v View, now time.Time) (text string, attention bool) {
 	case v.Paused != "":
 		return "Paused · open Helium Syncer", true
 	case v.PowerNote != "":
-		return "On battery · syncs when you plug in", false
+		// The agent writes the reason, so the tray and the window say the
+		// same thing and there is one place to change it.
+		return strings.TrimSuffix(v.PowerNote, "."), false
 	case v.Elsewhere:
 		return "Syncing from the command-line agent", false
+	case v.HeliumOpen && v.Live:
+		// With the helper extension, bookmarks and open tabs sync while
+		// Helium runs. Saying "syncs after you quit" here would tell the
+		// person the opposite of what is happening.
+		return "Syncing while Helium is open", false
 	case v.HeliumOpen:
 		return "Syncs after you quit Helium", false
 	case v.LastSync.IsZero():

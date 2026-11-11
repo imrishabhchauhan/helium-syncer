@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -591,5 +593,41 @@ func TestQuitSaysSoWhenThisCopyCannotQuit(t *testing.T) {
 	}
 	if err := AskToShow(); err != nil {
 		t.Errorf("show must still work: %v", err)
+	}
+}
+
+// On low battery the agent stops asking for changes, which is right, but it
+// used to say nothing and never try a failed sync again. On 10 Nov 2026 the
+// owner's Mac went quiet for eight hours that way, with its changes unsent
+// and nothing on screen to explain it.
+func TestLowBatteryRetriesAFailedSyncAndSaysWhy(t *testing.T) {
+	var mu sync.Mutex
+	tries := 0
+	f, pb := &fake{}, &powerBox{s: lowBattery}
+	a := batteryAgent(f, pb, BatteryBalanced)
+	a.Timing.WhileClosed = 40 * time.Millisecond
+	a.Timing.WhileClosedBattery = 40 * time.Millisecond
+	a.Timing.MaxBackoff = 30 * time.Millisecond
+	a.Sync = func(context.Context) (engine.Report, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		tries++
+		return engine.Report{}, errors.New("the server is not answering")
+	}
+
+	runFor(a, 500*time.Millisecond, nil)
+
+	mu.Lock()
+	n := tries
+	mu.Unlock()
+	if n < 3 {
+		t.Errorf("a failed sync was tried %d time(s) in 500 ms on low battery; it must keep trying", n)
+	}
+	st := a.Status.Snapshot()
+	if st.PowerNote == "" {
+		t.Error("nothing on screen says why the sync is waiting on low battery")
+	}
+	if !strings.Contains(strings.ToLower(st.PowerNote), "battery") {
+		t.Errorf("the note does not mention the battery: %q", st.PowerNote)
 	}
 }

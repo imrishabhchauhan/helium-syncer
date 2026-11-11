@@ -133,19 +133,36 @@ interface DeviceRow {
   name: string;
   platform: string;
   status: string;
+  last_seen: number;
 }
+
+// SeenEvery is how often "last seen" is written. It is only shown in the
+// list of computers, so once an hour is enough. It used to be written on
+// every request, which was a database write every few seconds per computer
+// and, on 10 Nov 2026, the one thing that failed: a database hiccup in that
+// write stopped every call, reads included, on both computers for hours.
+const SeenEvery = 60 * 60 * 1000;
 
 async function authed(req: Request, env: Env): Promise<DeviceRow> {
   const h = req.headers.get("authorization") ?? "";
   const token = h.startsWith("Bearer ") ? h.slice(7) : "";
   if (!token) throw new HttpError(401, "unauthorized", "This device is not connected. Enter your sync code again.");
-  const dev = await env.DB.prepare("SELECT id, account_id, name, platform, status FROM devices WHERE token_hash = ?1")
+  const dev = await env.DB.prepare("SELECT id, account_id, name, platform, status, last_seen FROM devices WHERE token_hash = ?1")
     .bind(await sha256Hex(token))
     .first<DeviceRow>();
   if (!dev || dev.status !== "active") {
     throw new HttpError(401, "unauthorized", "This device was removed from the sync. Enter your sync code to join again.");
   }
-  await env.DB.prepare("UPDATE devices SET last_seen = ?1 WHERE id = ?2").bind(Date.now(), dev.id).run();
+  const now = Date.now();
+  if (now - (dev.last_seen ?? 0) >= SeenEvery) {
+    // Never let this stop the call: it is a nicety, not the work asked for.
+    try {
+      await env.DB.prepare("UPDATE devices SET last_seen = ?1 WHERE id = ?2").bind(now, dev.id).run();
+      dev.last_seen = now;
+    } catch (err) {
+      console.error("last_seen not written", err);
+    }
+  }
   return dev;
 }
 

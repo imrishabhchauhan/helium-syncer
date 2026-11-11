@@ -25,7 +25,14 @@ func TestLine(t *testing.T) {
 		{with(ok, func(v *View) { v.LastError = "boom" }), "Problem syncing · open Helium Syncer", true},
 		{with(ok, func(v *View) { v.Paused = "update Helium" }), "Paused · open Helium Syncer", true},
 		{with(ok, func(v *View) { v.HeliumOpen = true }), "Syncs after you quit Helium", false},
-		{with(ok, func(v *View) { v.PowerNote = "x" }), "On battery · syncs when you plug in", false},
+		// With the helper extension connected, bookmarks and open tabs do
+		// sync while Helium runs: saying "after you quit" here told the
+		// person the opposite of what was happening.
+		{with(ok, func(v *View) { v.HeliumOpen = true; v.Live = true }), "Syncing while Helium is open", false},
+		// The reason for waiting comes from the agent, so the tray and the
+		// window say the same thing.
+		{with(ok, func(v *View) { v.PowerNote = "On battery: syncs when you plug in." }), "On battery: syncs when you plug in", false},
+		{with(ok, func(v *View) { v.PowerNote = "Battery is low: syncs when you plug in." }), "Battery is low: syncs when you plug in", false},
 		{ok, "Waiting for the first sync", false},
 		{with(ok, func(v *View) { v.LastSync = now.Add(-20 * time.Second) }), "Up to date · synced just now", false},
 		{with(ok, func(v *View) { v.LastSync = now.Add(-1 * time.Minute) }), "Up to date · synced 1 minute ago", false},

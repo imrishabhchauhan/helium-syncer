@@ -129,11 +129,26 @@ const tokenSecret = "device-token"
 // Code returns the stored sync code.
 func Code() (string, error) {
 	b, err := secrets.Load(Dir(), codeSecret)
-	if errors.Is(err, secrets.ErrNotFound) {
-		return "", ErrNotConnected
+	if err != nil {
+		return "", keyStoreError(err)
 	}
-	return string(b), err
+	return string(b), nil
 }
+
+// keyStoreError tells the two apart: nothing saved (this computer has not
+// joined a sync) and saved but unreadable (the key store would not open).
+// They used to look the same, which sent people to join again - the one
+// thing they must not do when their sync is fine.
+func keyStoreError(err error) error {
+	if errors.Is(err, secrets.ErrNotFound) {
+		return ErrNotConnected
+	}
+	return fmt.Errorf("%w: %v", ErrKeyStore, err)
+}
+
+// ErrKeyStore means the sync code or the device key is saved but this
+// computer's key store would not give it back (locked, or no permission).
+var ErrKeyStore = errors.New("this computer's key store would not open, so the saved sync code could not be read; unlock it and try again")
 
 // Connected reports whether this device has joined a sync.
 func (c *Config) Connected() bool { return c.DeviceID != "" && c.AccountID != "" }
@@ -153,7 +168,7 @@ func (c *Config) Client() (*cloud.Client, error) {
 	}
 	tok, err := secrets.Load(Dir(), tokenSecret)
 	if err != nil {
-		return nil, ErrNotConnected
+		return nil, keyStoreError(err)
 	}
 	return &cloud.Client{Base: c.Server, Token: string(tok), AccountID: s.AccountID, Key: s.Key}, nil
 }

@@ -159,7 +159,7 @@ func view(s *ui.Server, elsewhere bool) tray.View {
 	v := tray.View{Connected: cfg.Connected(), SetupDone: cfg.SetupDone, LastSync: cfg.LastSync, LastError: cfg.LastError, Elsewhere: elsewhere}
 	if a := s.Agent(); a != nil {
 		st := a.Status.Snapshot()
-		v.HeliumOpen, v.Syncing, v.Paused, v.LastError, v.PowerNote = st.HeliumOpen, st.Syncing, st.Paused, st.LastError, st.PowerNote
+		v.HeliumOpen, v.Syncing, v.Paused, v.LastError, v.PowerNote, v.Live = st.HeliumOpen, st.Syncing, st.Paused, st.LastError, st.PowerNote, st.Live
 		if st.LastSync.After(v.LastSync) {
 			v.LastSync = st.LastSync
 		}
