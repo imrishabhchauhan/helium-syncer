@@ -71,7 +71,7 @@ func DryRun(ctx context.Context, cfg Config) (DryRunReport, error) {
 		return out, err
 	}
 	for _, p := range list {
-		for _, f := range append(append([]string(nil), profileFiles...), "Sessions") {
+		for _, f := range backupOrder {
 			if err := copyIfExists(filepath.Join(cfg.UserData, p.Dir, f), filepath.Join(ud, p.Dir, f)); err != nil {
 				return out, err
 			}

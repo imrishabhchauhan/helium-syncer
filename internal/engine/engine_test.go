@@ -78,7 +78,7 @@ func TestRecoversFromInterruptedSync(t *testing.T) {
 
 	// Simulate a sync cut off by a power loss: backup + journal written,
 	// Bookmarks half-written, a new session file and a new profile created.
-	bk, err := backup(cfg.StateDir, ud, []string{"Default"}, time.Now())
+	bk, err := backup(cfg.StateDir, ud, []string{"Default"}, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

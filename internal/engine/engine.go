@@ -326,7 +326,7 @@ func Run(ctx context.Context, cfg Config) (Report, error) {
 	var j journal
 	if !cfg.WhileOpen {
 		done = rep.step("backup")
-		bk, err := backup(cfg.StateDir, cfg.UserData, dirs, cfg.Now())
+		bk, err := backup(cfg.StateDir, cfg.UserData, dirs, cfg.Off, cfg.Now())
 		done()
 		if err != nil {
 			return rep, fmt.Errorf("engine: backup failed, nothing was changed: %w", err)

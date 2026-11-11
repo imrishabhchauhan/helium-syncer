@@ -13,8 +13,37 @@ import (
 	"time"
 )
 
-// The files a sync may change, relative to a profile folder.
-var profileFiles = []string{"Bookmarks", "History", "History-journal", "Preferences", "Secure Preferences"}
+// The files a sync may change, relative to a profile folder, and the kind
+// of data each holds. A kind the person switched off is never written, so
+// backing it up copies a large file for nothing: History alone is 44 MB on
+// the owner's Mac, where history is off, and it was copied on every sync.
+var profileFiles = map[string][]string{
+	"Bookmarks":          {KindBookmarks},
+	"History":            {KindHistory},
+	"History-journal":    {KindHistory},
+	"Preferences":        {KindSettings, KindExtensions},
+	"Secure Preferences": {KindSettings, KindExtensions},
+	"Sessions":           {KindTabs},
+}
+
+// backedUp reports whether a file must be copied before this sync: only
+// when at least one kind of data it holds is still on.
+func backedUp(name string, off map[string]bool) bool {
+	kinds, known := profileFiles[name]
+	if !known {
+		return true
+	}
+	for _, k := range kinds {
+		if !off[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// backupOrder keeps the copying in the same order every time, so a failure
+// is the same failure twice.
+var backupOrder = []string{"Bookmarks", "History", "History-journal", "Preferences", "Secure Preferences", "Sessions"}
 
 // journal is written before a sync touches Helium's files and removed when
 // the sync finished. If it exists at startup, the previous sync was cut off
@@ -26,7 +55,7 @@ type journal struct {
 }
 
 // backup copies every file a sync may change into a new dated folder.
-func backup(stateDir, userData string, profileDirs []string, now time.Time) (string, error) {
+func backup(stateDir, userData string, profileDirs []string, off map[string]bool, now time.Time) (string, error) {
 	dst := filepath.Join(stateDir, "backups", now.UTC().Format("20060102-150405.000"))
 	copyOne := func(rel string) error {
 		src := filepath.Join(userData, rel)
@@ -46,13 +75,13 @@ func backup(stateDir, userData string, profileDirs []string, now time.Time) (str
 		return "", err
 	}
 	for _, d := range profileDirs {
-		for _, f := range profileFiles {
+		for _, f := range backupOrder {
+			if !backedUp(f, off) {
+				continue
+			}
 			if err := copyOne(filepath.Join(d, f)); err != nil {
 				return "", err
 			}
-		}
-		if err := copyOne(filepath.Join(d, "Sessions")); err != nil {
-			return "", err
 		}
 	}
 	// A marker proves the backup is complete; restore refuses half backups.
@@ -106,7 +135,12 @@ func restore(userData string, j journal) error {
 	return nil
 }
 
-// pruneBackups keeps the newest keep backups and anything younger than maxAge.
+// pruneBackups keeps at most keep backups, and of those only the ones
+// younger than maxAge.
+//
+// It used to keep the newest keep *and* anything younger than maxAge, which
+// on a computer that syncs every few minutes meant keeping a month of them:
+// 157 folders and 2.1 GB on the owner's Mac, a laptop.
 func pruneBackups(stateDir string, keep int, maxAge time.Duration, now time.Time) error {
 	root := filepath.Join(stateDir, "backups")
 	entries, err := os.ReadDir(root)
@@ -124,11 +158,10 @@ func pruneBackups(stateDir string, keep int, maxAge time.Duration, now time.Time
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(names)))
 	for i, n := range names {
-		if i < keep {
-			continue
-		}
+		tooMany := i >= keep
 		t, err := time.Parse("20060102-150405.000", n)
-		if err == nil && now.Sub(t) < maxAge {
+		tooOld := err == nil && now.Sub(t) >= maxAge
+		if !tooMany && !tooOld {
 			continue
 		}
 		if err := os.RemoveAll(filepath.Join(root, n)); err != nil {
