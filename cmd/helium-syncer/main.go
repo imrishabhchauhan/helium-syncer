@@ -345,10 +345,15 @@ func runAgent() error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+	// "Helium Syncer --quit" must stop this copy too, not only the app:
+	// scripts and the update step need a way to stop the background sync
+	// that is not killing the program.
+	ctx, quit := context.WithCancel(ctx)
+	defer quit()
 	// The companion extension connects here, so bookmarks can sync while
 	// Helium is open. Without the extension nothing changes: everything
 	// still waits for Helium to quit.
-	go agent.Serve(lock, func() {}, nil, a.Live.Handler())
+	go agent.Serve(lock, func() {}, quit, a.Live.Handler())
 	fmt.Println("Helium Syncer is watching Helium. Bookmarks and open tabs sync while it is open; everything else after it quits. Ctrl+C to stop.")
 	return a.Run(ctx)
 }
